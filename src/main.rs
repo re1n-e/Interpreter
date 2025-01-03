@@ -27,13 +27,7 @@ fn run_lexer(filename: &str) -> i32 {
     for token in tokens {
         match token.token_type {
             TokenType::STRING(ref s) => println!("STRING \"{}\" {}", s, s),
-            TokenType::NUMBER(s, is_deci) => {
-                if !is_deci {
-                    println!("NUMBER {s} {s}.0")
-                } else {
-                    println!("NUMBER {s} {}", s.parse::<f64>().unwrap());
-                }
-            }
+            TokenType::NUMBER(org_val, val) => println!("NUMBER {org_val} {val}"),
             TokenType::Eof => println!("EOF  null"),
             _ => println!("{:?} {} null", token.token_type, token.lexeme),
         }

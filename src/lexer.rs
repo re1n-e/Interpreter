@@ -33,7 +33,7 @@ pub enum TokenType {
     STRING(String),
 
     // Number
-    NUMBER(String, bool),
+    NUMBER(String, String),
 
     // Special tokens
     Eof,
@@ -173,20 +173,43 @@ impl Lexer {
 
     fn scan_num(&mut self, num: char, chars: &mut Peekable<Chars>, line: usize) -> Option<Token> {
         let mut value = String::from(num);
-        let mut is_deci = false;
+        let mut org_value = String::from(num);
+        let mut zeroes = String::new();
+        let mut deci = false;
         while let Some(ch) = chars.peek() {
-            match *ch {
-                '0'..='9' => value.push(*ch),
+            match ch {
+                '0' => {
+                    if deci {
+                        zeroes.push('0');
+                    } else {
+                        value.push(*ch);
+                    }
+                }
+                '1'..='9' => {
+                    if !zeroes.is_empty() {
+                        value.push_str(&zeroes);
+                        zeroes.clear();
+                    }
+                    value.push(*ch);
+                }
                 '.' => {
                     value.push(*ch);
-                    is_deci = true;
+                    deci = true;
                 }
                 _ => break,
             }
+            org_value.push(*ch);
             chars.next();
         }
+
+        if !deci {
+            value.push_str(&".0");
+        } else if value.ends_with('.') {
+            value.push('0');
+        }
+
         Some(Token {
-            token_type: TokenType::NUMBER(value.clone(), is_deci),
+            token_type: TokenType::NUMBER(org_value.clone(), value.clone()),
             lexeme: format!("\"{}\"", value),
             line,
         })
