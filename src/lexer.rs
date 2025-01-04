@@ -36,6 +36,26 @@ pub enum TokenType {
     NUMBER(String, String),
 
     // Special tokens
+    IDENTIFIER(String),
+
+    // TokenType
+    AND,
+    CLASS,
+    ELSE,
+    FALSE,
+    FOR,
+    FUN,
+    IF,
+    NIL,
+    OR,
+    PRINT,
+    RETURN,
+    SUPER,
+    THIS,
+    TRUE,
+    VAR,
+    WHILE,
+
     Eof,
 }
 
@@ -48,6 +68,28 @@ pub struct Token {
 
 pub struct Lexer {
     had_error: bool,
+}
+
+fn keywords(key: &str) -> Option<TokenType> {
+    match key {
+        "and" => Some(TokenType::AND),
+        "class" => Some(TokenType::CLASS),
+        "else" => Some(TokenType::ELSE),
+        "false" => Some(TokenType::FALSE),
+        "for" => Some(TokenType::FOR),
+        "fun" => Some(TokenType::FUN),
+        "if" => Some(TokenType::IF),
+        "nil" => Some(TokenType::NIL),
+        "or" => Some(TokenType::OR),
+        "print" => Some(TokenType::PRINT),
+        "return" => Some(TokenType::RETURN),
+        "super" => Some(TokenType::SUPER),
+        "this" => Some(TokenType::THIS),
+        "true" => Some(TokenType::TRUE),
+        "var" => Some(TokenType::VAR),
+        "while" => Some(TokenType::WHILE),
+        _ => None,
+    }
 }
 
 impl Lexer {
@@ -140,10 +182,12 @@ impl Lexer {
             '"' => self.scan_string(chars, line),
 
             // Number
-            '1'..='9' => self.scan_num(ch, chars, line),
+            '0'..='9' => self.scan_num(ch, chars, line),
 
             // Whitespace
             ch if ch.is_whitespace() => None,
+
+            id if id == '_' || id.is_alphanumeric() => self.scan_identifier(id, chars, line),
 
             // Unexpected characters
             _ => {
@@ -213,6 +257,36 @@ impl Lexer {
             lexeme: format!("\"{}\"", value),
             line,
         })
+    }
+
+    fn scan_identifier(
+        &mut self,
+        num: char,
+        chars: &mut Peekable<Chars>,
+        line: usize,
+    ) -> Option<Token> {
+        let mut identifier = String::from(num);
+        while let Some(ch) = chars.peek() {
+            match ch {
+                ch if ch.is_alphanumeric() || ch == &'_' => identifier.push(*ch),
+                _ => break,
+            }
+            chars.next();
+        }
+
+        if let Some(reserved) = keywords(&identifier) {
+            Some(Token {
+                token_type: reserved,
+                lexeme: format!("{}", identifier),
+                line,
+            })
+        } else {
+            Some(Token {
+                token_type: TokenType::IDENTIFIER(identifier.clone()),
+                lexeme: format!("\"{}\"", identifier),
+                line,
+            })
+        }
     }
 
     fn match_next(

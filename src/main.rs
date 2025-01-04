@@ -2,7 +2,6 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::process::exit;
-
 use lexer::Lexer;
 use lexer::TokenType;
 pub mod lexer;
@@ -28,6 +27,7 @@ fn run_lexer(filename: &str) -> i32 {
         match token.token_type {
             TokenType::STRING(ref s) => println!("STRING \"{}\" {}", s, s),
             TokenType::NUMBER(org_val, val) => println!("NUMBER {org_val} {val}"),
+            TokenType::IDENTIFIER(iden) => println!("IDENTIFIER {} null", iden),
             TokenType::Eof => println!("EOF  null"),
             _ => println!("{:?} {} null", token.token_type, token.lexeme),
         }
