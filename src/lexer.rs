@@ -38,7 +38,7 @@ pub enum TokenType {
     // Special tokens
     IDENTIFIER(String),
 
-    // TokenType
+    // IDENTIFIER
     AND,
     CLASS,
     ELSE,

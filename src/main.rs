@@ -40,6 +40,10 @@ fn run_lexer(filename: &str) -> i32 {
     }
 }
 
+fn parse(filename: &str) {
+
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -49,6 +53,7 @@ fn main() {
 
     match args[1].as_str() {
         "tokenize" => exit(run_lexer(&args[2])),
+        "parse" => parse(&args[2]),
         cmd => {
             writeln!(io::stderr(), "Unknown command: {}", cmd).unwrap();
             exit(1);
