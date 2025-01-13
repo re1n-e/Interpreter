@@ -40,7 +40,6 @@ fn run_lexer(filename: &str) -> i32 {
     }
 }
 
-
 fn parse(filename: &str) -> i32 {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
