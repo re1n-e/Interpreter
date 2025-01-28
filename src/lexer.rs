@@ -19,6 +19,7 @@ pub enum TokenType {
     SLASH,
     COMMENT,
 
+    
     // One or two character tokens
     EQUAL,
     EQUAL_EQUAL,
