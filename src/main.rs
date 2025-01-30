@@ -40,6 +40,10 @@ fn run_lexer(filename: &str) -> i32 {
     }
 }
 
+fn group() {
+
+}
+
 fn parse(filename: &str) -> i32 {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
@@ -57,13 +61,13 @@ fn parse(filename: &str) -> i32 {
     let mut lexer = Lexer::new();
     let tokens = lexer.lex(&file_contents);
 
-    for token in tokens {
+    for token in tokens.into_iter() {
         match token.token_type {
-            TokenType::STRING(ref s) => println!("STRING \"{}\" {}", s, s),
-            TokenType::NUMBER(org_val, val) => println!("NUMBER {org_val} {val}"),
-            TokenType::IDENTIFIER(iden) => println!("IDENTIFIER {} null", iden),
-            TokenType::Eof => println!("EOF  null"),
-            _ => println!("{:?} {} null", token.token_type, token.lexeme),
+            TokenType::Eof => (),
+            TokenType::LEFT_PAREN => todo!(),
+            TokenType::STRING(ref s) => println!("{}", s),
+            TokenType::NUMBER(_, val) => println!("{val}"),
+            _ => println!("{}", token.lexeme),
         }
     }
 
