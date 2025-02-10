@@ -1,82 +1,8 @@
-use lexer::Lexer;
-use lexer::TokenType;
 use std::env;
-use std::fs;
 use std::io::{self, Write};
 use std::process::exit;
 pub mod lexer;
-
-fn run_lexer(filename: &str) -> i32 {
-    let file_contents = match fs::read_to_string(filename) {
-        Ok(contents) => contents,
-        Err(_) => {
-            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
-            return 1;
-        }
-    };
-
-    if file_contents.is_empty() {
-        println!("EOF  null");
-        return 0;
-    }
-
-    let mut lexer = Lexer::new();
-    let tokens = lexer.lex(&file_contents);
-
-    for token in tokens {
-        match token.token_type {
-            TokenType::STRING(ref s) => println!("STRING \"{}\" {}", s, s),
-            TokenType::NUMBER(org_val, val) => println!("NUMBER {org_val} {val}"),
-            TokenType::IDENTIFIER(iden) => println!("IDENTIFIER {} null", iden),
-            TokenType::Eof => println!("EOF  null"),
-            _ => println!("{:?} {} null", token.token_type, token.lexeme),
-        }
-    }
-
-    if lexer.had_error() {
-        65
-    } else {
-        0
-    }
-}
-
-fn group() {
-
-}
-
-fn parse(filename: &str) -> i32 {
-    let file_contents = match fs::read_to_string(filename) {
-        Ok(contents) => contents,
-        Err(_) => {
-            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
-            return 1;
-        }
-    };
-
-    if file_contents.is_empty() {
-        println!("EOF  null");
-        return 0;
-    }
-
-    let mut lexer = Lexer::new();
-    let tokens = lexer.lex(&file_contents);
-
-    for token in tokens.into_iter() {
-        match token.token_type {
-            TokenType::Eof => (),
-            TokenType::LEFT_PAREN => todo!(),
-            TokenType::STRING(ref s) => println!("{}", s),
-            TokenType::NUMBER(_, val) => println!("{val}"),
-            _ => println!("{}", token.lexeme),
-        }
-    }
-
-    if lexer.had_error() {
-        65
-    } else {
-        0
-    }
-}
+pub mod parse;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -86,8 +12,8 @@ fn main() {
     }
 
     match args[1].as_str() {
-        "tokenize" => exit(run_lexer(&args[2])),
-        "parse" => exit(parse(&args[2])),
+        "tokenize" => exit(lexer::run_lexer(&args[2])),
+        "parse" => exit(parse::parse(&args[2])),
         cmd => {
             writeln!(io::stderr(), "Unknown command: {}", cmd).unwrap();
             exit(1);
