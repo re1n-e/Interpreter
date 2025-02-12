@@ -1,10 +1,32 @@
-use crate::lexer::Lexer;
-use crate::lexer::TokenType;
 use crate::lexer;
-use std::io::{self, Write};
+use crate::lexer::{Lexer, Token, TokenType};
 use std::fs;
+use std::io::{self, Write};
 
-fn parse_group(tokens: &mut std::iter::Peekable<std::vec::IntoIter<lexer::Token>>) -> String {
+struct Parser<'a> {
+    tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>,
+    current: usize,
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> Self {
+        Parser { tokens, current: 0 }
+    }
+
+    fn peek(&mut self) -> Option<&Token> {
+        self.tokens.peek()
+    }
+
+    fn advance(&mut self) -> Option<Token> {
+        self.tokens.next()
+    }
+
+    fn expression() {
+        
+    }
+}
+
+fn parse_group(tokens: &mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> String {
     let mut group_tokens: Vec<String> = Vec::new();
     let mut depth = 1;
 
@@ -21,7 +43,7 @@ fn parse_group(tokens: &mut std::iter::Peekable<std::vec::IntoIter<lexer::Token>
                 if let Some(last) = group_tokens.pop() {
                     group_tokens.push(format!("{last})"));
                 }
-                
+
                 if depth == 0 {
                     break;
                 }
@@ -71,7 +93,7 @@ pub fn parse(filename: &str) -> i32 {
                 if let Some(t) = tokens.next() {
                     match t.token_type {
                         TokenType::NUMBER(_, val) => println!("(- {val})"),
-                        _ => println!("(- {})", t.lexeme), 
+                        _ => println!("(- {})", t.lexeme),
                     }
                 }
             }
