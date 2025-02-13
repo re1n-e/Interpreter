@@ -1,7 +1,25 @@
-use crate::lexer;
 use crate::lexer::{Lexer, Token, TokenType};
 use std::fs;
 use std::io::{self, Write};
+
+#[derive(Debug)]
+enum Expr {
+    Bianry {
+        left: Box<Expr>,
+        operator: Token,
+        right: Box<Expr>,
+    },
+    Grouping {
+        expression: Box<Expr>,
+    },
+    Literal {
+        value: f64,
+    },
+    Unary {
+        operator: Token,
+        right: Box<Expr>,
+    },
+}
 
 struct Parser<'a> {
     tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>,
