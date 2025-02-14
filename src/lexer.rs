@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Write};
 
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TokenType {
     // Grouping tokens
     LEFT_PAREN,
@@ -62,7 +62,7 @@ pub enum TokenType {
     Eof,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,

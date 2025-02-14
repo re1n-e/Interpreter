@@ -4,7 +4,7 @@ use std::io::{self, Write};
 
 #[derive(Debug)]
 enum Expr {
-    Bianry {
+    Binary {
         left: Box<Expr>,
         operator: Token,
         right: Box<Expr>,
@@ -26,6 +26,16 @@ struct Parser<'a> {
     current: usize,
 }
 
+// expression     → equality ;
+// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
+// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+// term           → factor ( ( "-" | "+" ) factor )* ;
+// factor         → unary ( ( "/" | "*" ) unary )* ;
+// unary          → ( "!" | "-" ) unary
+//                | primary ;
+// primary        → NUMBER | STRING | "true" | "false" | "nil"
+//                | "(" expression ")" ;
+
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> Self {
         Parser { tokens, current: 0 }
@@ -39,8 +49,28 @@ impl<'a> Parser<'a> {
         self.tokens.next()
     }
 
-    fn expression() {
-        
+    fn expression(&mut self) -> Expr {
+        self.equality()
+    }
+
+    fn equality(&mut self) -> Expr {
+        let mut node: Expr = self.comparison();
+        while let Some(op) = self.match_op(vec![TokenType::BANG_EQUAL, TokenType::EQUAL_EQUAL]) {
+            let right = self.comparison();
+            node = Expr::Binary { left: Box::new(node), operator: op, right: Box::new(right) }
+        }
+        node
+    }
+
+    fn comparison(&mut self) -> Expr {}
+
+    fn match_op(&mut self, ops: Vec<TokenType>) -> Option<Token> {
+        if let Some(token) = self.peek() {
+            if ops.contains(&token.token_type) {
+                return self.advance()
+            }
+        }
+        None
     }
 }
 
