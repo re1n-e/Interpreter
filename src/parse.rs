@@ -13,7 +13,7 @@ enum Expr {
         expression: Box<Expr>,
     },
     Literal {
-        value: f64,
+        value: String,
     },
     Unary {
         operator: Token,
@@ -21,24 +21,25 @@ enum Expr {
     },
 }
 
+#[derive(Debug)]
+struct ParseError {
+    token: Token,
+    message: String,
+}
+
 struct Parser<'a> {
     tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>,
     current: usize,
+    had_error: bool,
 }
-
-// expression     → equality ;
-// equality       → comparison ( ( "!=" | "==" ) comparison )* ;
-// comparison     → term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-// term           → factor ( ( "-" | "+" ) factor )* ;
-// factor         → unary ( ( "/" | "*" ) unary )* ;
-// unary          → ( "!" | "-" ) unary
-//                | primary ;
-// primary        → NUMBER | STRING | "true" | "false" | "nil"
-//                | "(" expression ")" ;
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> Self {
-        Parser { tokens, current: 0 }
+        Parser { 
+            tokens, 
+            current: 0,
+            had_error: false,
+        }
     }
 
     fn peek(&mut self) -> Option<&Token> {
@@ -46,31 +47,178 @@ impl<'a> Parser<'a> {
     }
 
     fn advance(&mut self) -> Option<Token> {
+        self.current += 1;
         self.tokens.next()
     }
 
-    fn expression(&mut self) -> Expr {
+    fn expression(&mut self) -> Result<Expr, ParseError> {
         self.equality()
     }
 
-    fn equality(&mut self) -> Expr {
-        let mut node: Expr = self.comparison();
+    fn equality(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.comparison()?;
+
         while let Some(op) = self.match_op(vec![TokenType::BANG_EQUAL, TokenType::EQUAL_EQUAL]) {
-            let right = self.comparison();
-            node = Expr::Binary { left: Box::new(node), operator: op, right: Box::new(right) }
+            let right = self.comparison()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            };
         }
-        node
+
+        Ok(expr)
     }
 
-    fn comparison(&mut self) -> Expr {}
+    fn comparison(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.term()?;
+
+        while let Some(op) = self.match_op(vec![
+            TokenType::GREATER,
+            TokenType::GREATER_EQUAL,
+            TokenType::LESS,
+            TokenType::LESS_EQUAL,
+        ]) {
+            let right = self.term()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.factor()?;
+
+        while let Some(op) = self.match_op(vec![TokenType::MINUS, TokenType::PLUS]) {
+            let right = self.factor()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn factor(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.unary()?;
+
+        while let Some(op) = self.match_op(vec![TokenType::SLASH, TokenType::STAR]) {
+            let right = self.unary()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn unary(&mut self) -> Result<Expr, ParseError> {
+        if let Some(op) = self.match_op(vec![TokenType::BANG, TokenType::MINUS]) {
+            let right = self.unary()?;
+            return Ok(Expr::Unary {
+                operator: op,
+                right: Box::new(right),
+            });
+        }
+
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Result<Expr, ParseError> {
+        if let Some(token) = self.peek().cloned() {
+            match &token.token_type {
+                TokenType::FALSE => {
+                    self.advance();
+                    Ok(Expr::Literal { value: String::from("false") })
+                }
+                TokenType::TRUE => {
+                    self.advance();
+                    Ok(Expr::Literal { value: String::from("true") })
+                }
+                TokenType::NIL => {
+                    self.advance();
+                    Ok(Expr::Literal { value: String::from("nil") })
+                }
+                TokenType::NUMBER(_, val) => {
+                    let val = val.clone();
+                    self.advance();
+                    Ok(Expr::Literal { value: val.to_string() })
+                }
+                TokenType::STRING(s) => {
+                    let s = s.clone();
+                    self.advance();
+                    Ok(Expr::Literal { value: s })
+                }
+                TokenType::LEFT_PAREN => {
+                    self.advance();
+                    let expr = self.expression()?;
+                    
+                    match self.peek() {
+                        Some(t) if t.token_type == TokenType::RIGHT_PAREN => {
+                            self.advance();
+                            Ok(Expr::Grouping {
+                                expression: Box::new(expr),
+                            })
+                        }
+                        Some(t) => Err(ParseError {
+                            token: t.clone(),
+                            message: String::from("Expected ')' after expression."),
+                        }),
+                        None => Err(ParseError {
+                            token: token.clone(),
+                            message: String::from("Unexpected end of input, expected ')'"),
+                        }),
+                    }
+                }
+                _ => Err(ParseError {
+                    token: token.clone(),
+                    message: String::from("Expected expression."),
+                }),
+            }
+        } else {
+            Err(ParseError {
+                token: Token {
+                    token_type: TokenType::Eof,
+                    lexeme: String::from(""),
+                    line: 0,
+                },
+                message: String::from("Unexpected end of input."),
+            })
+        }
+    }
 
     fn match_op(&mut self, ops: Vec<TokenType>) -> Option<Token> {
         if let Some(token) = self.peek() {
             if ops.contains(&token.token_type) {
-                return self.advance()
+                return self.advance();
             }
         }
         None
+    }
+
+    pub fn had_error(&self) -> bool {
+        self.had_error
+    }
+
+    pub fn parse(&mut self) -> Option<Expr> {
+        match self.expression() {
+            Ok(expr) => Some(expr),
+            Err(error) => {
+                eprintln!("Parse error at line {}: {}", 
+                    error.token.line, 
+                    error.message);
+                self.had_error = true;
+                None
+            }
+        }
     }
 }
 
