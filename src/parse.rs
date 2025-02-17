@@ -21,6 +21,32 @@ enum Expr {
     },
 }
 
+impl Expr {
+    fn ast_print(&self) -> String {
+        match self {
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                format!(
+                    "({} {} {})",
+                    operator.lexeme,
+                    left.ast_print(),
+                    right.ast_print()
+                )
+            }
+            Expr::Grouping { expression } => {
+                format!("(group {})", expression.ast_print())
+            }
+            Expr::Literal { value } => value.clone(),
+            Expr::Unary { operator, right } => {
+                format!("({} {})", operator.lexeme, right.ast_print())
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 struct ParseError {
     token: Token,
@@ -35,8 +61,8 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> Self {
-        Parser { 
-            tokens, 
+        Parser {
+            tokens,
             current: 0,
             had_error: false,
         }
@@ -137,20 +163,28 @@ impl<'a> Parser<'a> {
             match &token.token_type {
                 TokenType::FALSE => {
                     self.advance();
-                    Ok(Expr::Literal { value: String::from("false") })
+                    Ok(Expr::Literal {
+                        value: String::from("false"),
+                    })
                 }
                 TokenType::TRUE => {
                     self.advance();
-                    Ok(Expr::Literal { value: String::from("true") })
+                    Ok(Expr::Literal {
+                        value: String::from("true"),
+                    })
                 }
                 TokenType::NIL => {
                     self.advance();
-                    Ok(Expr::Literal { value: String::from("nil") })
+                    Ok(Expr::Literal {
+                        value: String::from("nil"),
+                    })
                 }
                 TokenType::NUMBER(_, val) => {
                     let val = val.clone();
                     self.advance();
-                    Ok(Expr::Literal { value: val.to_string() })
+                    Ok(Expr::Literal {
+                        value: val.to_string(),
+                    })
                 }
                 TokenType::STRING(s) => {
                     let s = s.clone();
@@ -160,7 +194,7 @@ impl<'a> Parser<'a> {
                 TokenType::LEFT_PAREN => {
                     self.advance();
                     let expr = self.expression()?;
-                    
+
                     match self.peek() {
                         Some(t) if t.token_type == TokenType::RIGHT_PAREN => {
                             self.advance();
@@ -212,46 +246,15 @@ impl<'a> Parser<'a> {
         match self.expression() {
             Ok(expr) => Some(expr),
             Err(error) => {
-                eprintln!("Parse error at line {}: {}", 
-                    error.token.line, 
-                    error.message);
+                eprintln!(
+                    "Parse error at line {}: {}",
+                    error.token.line, error.message
+                );
                 self.had_error = true;
                 None
             }
         }
     }
-}
-
-fn parse_group(tokens: &mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> String {
-    let mut group_tokens: Vec<String> = Vec::new();
-    let mut depth = 1;
-
-    group_tokens.push(String::from("(group"));
-
-    while let Some(token) = tokens.next() {
-        match token.token_type {
-            TokenType::LEFT_PAREN => {
-                depth += 1;
-                group_tokens.push(String::from("(group"));
-            }
-            TokenType::RIGHT_PAREN => {
-                depth -= 1;
-                if let Some(last) = group_tokens.pop() {
-                    group_tokens.push(format!("{last})"));
-                }
-
-                if depth == 0 {
-                    break;
-                }
-            }
-            TokenType::STRING(s) => group_tokens.push(s),
-            TokenType::NUMBER(_, val) => group_tokens.push(val.to_string()),
-            TokenType::IDENTIFIER(id) => group_tokens.push(id),
-            _ => group_tokens.push(token.lexeme),
-        }
-    }
-
-    group_tokens.join(" ")
 }
 
 pub fn parse(filename: &str) -> i32 {
@@ -271,35 +274,17 @@ pub fn parse(filename: &str) -> i32 {
     let mut lexer = Lexer::new();
     let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
 
-    while let Some(token) = tokens.next() {
-        match token.token_type {
-            TokenType::Eof => break,
-            TokenType::STRING(ref s) => println!("{}", s),
-            TokenType::NUMBER(_, val) => println!("{val}"),
-            TokenType::LEFT_PAREN => {
-                let group_result = parse_group(&mut tokens);
-                println!("{}", group_result);
-            }
-            TokenType::BANG => {
-                if let Some(t) = tokens.next() {
-                    println!("(! {})", t.lexeme);
-                }
-            }
-            TokenType::MINUS => {
-                if let Some(t) = tokens.next() {
-                    match t.token_type {
-                        TokenType::NUMBER(_, val) => println!("(- {val})"),
-                        _ => println!("(- {})", t.lexeme),
-                    }
-                }
-            }
-            _ => println!("{}", token.lexeme),
-        }
-    }
+    let mut parser = Parser::new(&mut tokens);
 
-    if lexer.had_error() {
-        65
-    } else {
-        0
+    match parser.parse() {
+        Some(expr) => {
+            println!("{}", expr.ast_print());
+            if lexer.had_error() || parser.had_error() {
+                65
+            } else {
+                0
+            }
+        }
+        None => 65,
     }
 }
