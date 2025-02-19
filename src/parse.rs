@@ -1,9 +1,22 @@
 use crate::lexer::{Lexer, Token, TokenType};
 use std::fs;
 use std::io::{self, Write};
+use std::any::Any;
+
+fn parse_number(val: &str, token: Token) -> Result<Expr, ParseError> {
+    match val.parse::<f64>() {
+        Ok(num) => Ok(Expr::Literal {
+            value: Box::new((num, val.to_string())),
+        }),
+        Err(_) => Err(ParseError {
+            token,
+            message: format!("Invalid number: {}", val),
+        }),
+    }
+}
 
 #[derive(Debug)]
-enum Expr {
+pub enum Expr {
     Binary {
         left: Box<Expr>,
         operator: Token,
@@ -13,7 +26,7 @@ enum Expr {
         expression: Box<Expr>,
     },
     Literal {
-        value: String,
+        value: Box<dyn Any>,
     },
     Unary {
         operator: Token,
@@ -39,7 +52,21 @@ impl Expr {
             Expr::Grouping { expression } => {
                 format!("(group {})", expression.ast_print())
             }
-            Expr::Literal { value } => value.clone(),
+            Expr::Literal { value } => {
+                if let Some(s) = value.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(n) = value.downcast_ref::<f64>() {
+                    n.to_string()
+                } else if let Some(b) = value.downcast_ref::<bool>() {
+                    b.to_string()
+                } else if value.downcast_ref::<()>().is_some() {
+                    "nil".to_string()
+                } else if let Some((_, n)) = value.downcast_ref::<(f64, String)>() {
+                    n.to_string()
+                } else {
+                    "Unknown Literal".to_string()
+                }
+            }
             Expr::Unary { operator, right } => {
                 format!("({} {})", operator.lexeme, right.ast_print())
             }
@@ -48,12 +75,12 @@ impl Expr {
 }
 
 #[derive(Debug)]
-struct ParseError {
+pub struct ParseError {
     token: Token,
     message: String,
 }
 
-struct Parser<'a> {
+pub struct Parser<'a> {
     tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>,
     current: usize,
     had_error: bool,
@@ -164,32 +191,30 @@ impl<'a> Parser<'a> {
                 TokenType::FALSE => {
                     self.advance();
                     Ok(Expr::Literal {
-                        value: String::from("false"),
+                        value: Box::new(false),
                     })
                 }
                 TokenType::TRUE => {
                     self.advance();
                     Ok(Expr::Literal {
-                        value: String::from("true"),
+                        value: Box::new(true),
                     })
                 }
                 TokenType::NIL => {
                     self.advance();
                     Ok(Expr::Literal {
-                        value: String::from("nil"),
+                        value: Box::new(()),
                     })
                 }
                 TokenType::NUMBER(_, val) => {
                     let val = val.clone();
                     self.advance();
-                    Ok(Expr::Literal {
-                        value: val.to_string(),
-                    })
+                    parse_number(&val, token.clone()) 
                 }
                 TokenType::STRING(s) => {
                     let s = s.clone();
                     self.advance();
-                    Ok(Expr::Literal { value: s })
+                    Ok(Expr::Literal { value: Box::new(s) })
                 }
                 TokenType::LEFT_PAREN => {
                     self.advance();

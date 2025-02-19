@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::process::exit;
 pub mod lexer;
 pub mod parse;
+pub mod evaluate;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -14,6 +15,7 @@ fn main() {
     match args[1].as_str() {
         "tokenize" => exit(lexer::run_lexer(&args[2])),
         "parse" => exit(parse::parse(&args[2])),
+        "evaluate" => exit(evaluate::evaluate(&args[2])),
         cmd => {
             writeln!(io::stderr(), "Unknown command: {}", cmd).unwrap();
             exit(1);
