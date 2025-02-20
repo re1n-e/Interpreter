@@ -11,7 +11,6 @@ pub enum TokenType {
     RIGHT_PAREN,
     LEFT_BRACE,
     RIGHT_BRACE,
-
     // Single-character tokens
     STAR,
     DOT,
