@@ -1,7 +1,7 @@
-use std::iter::Peekable;
-use std::str::Chars;
 use std::fs;
 use std::io::{self, Write};
+use std::iter::Peekable;
+use std::str::Chars;
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, PartialEq, Clone)]
@@ -11,6 +11,7 @@ pub enum TokenType {
     RIGHT_PAREN,
     LEFT_BRACE,
     RIGHT_BRACE,
+
     // Single-character tokens
     STAR,
     DOT,
