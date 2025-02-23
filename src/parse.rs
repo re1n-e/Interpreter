@@ -34,6 +34,12 @@ pub enum Expr {
     },
 }
 
+pub enum Stmt {
+    expr(Expr),
+    print(Expr),
+}
+
+
 impl Expr {
     fn ast_print(&self) -> String {
         match self {
@@ -279,6 +285,49 @@ impl<'a> Parser<'a> {
                 None
             }
         }
+    }
+
+    fn consume(&mut self, ty: TokenType, message: &str) -> Option<> {
+        if let Some(t) = self.match_op(vec![ty]) {
+            match t.token_type {
+                ty => (),
+                _ => {
+                    eprintln!(
+                        "Parse error at line {}: {}",
+                        error.token.line, error.message
+                    );
+                    self.had_error = true;
+                    None
+                }
+            }
+        }
+    }
+
+    fn statement(&mut self) -> Option<Stmt> {
+        if let Some(print) = self.match_op(vec![TokenType::PRINT]) {
+            match print.token_type {
+                TokenType::PRINT => return self.printStatement(),
+                _ => return self.expressionStatement(),
+            }
+        }
+        None
+    }
+
+    fn printStatement(&mut self) -> Option<Stmt> {
+        let value = self.expression().unwrap();
+        self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
+        return Some(Stmt::print(value))
+    }
+
+    fn expressionStatement(&mut self) -> Option<Stmt> {
+        let value = self.expression().unwrap();
+        self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
+        return Some(Stmt::expr(value))
+    }
+    
+    pub fn program(&mut self) -> Option<Expr> {
+
+        None
     }
 }
 
