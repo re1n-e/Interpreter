@@ -1,7 +1,7 @@
 use crate::lexer::{Lexer, Token, TokenType};
+use std::any::Any;
 use std::fs;
 use std::io::{self, Write};
-use std::any::Any;
 
 fn parse_number(val: &str, token: Token) -> Result<Expr, ParseError> {
     match val.parse::<f64>() {
@@ -38,7 +38,6 @@ pub enum Stmt {
     expr(Expr),
     print(Expr),
 }
-
 
 impl Expr {
     fn ast_print(&self) -> String {
@@ -215,7 +214,7 @@ impl<'a> Parser<'a> {
                 TokenType::NUMBER(_, val) => {
                     let val = val.clone();
                     self.advance();
-                    parse_number(&val, token.clone()) 
+                    parse_number(&val, token.clone())
                 }
                 TokenType::STRING(s) => {
                     let s = s.clone();
@@ -287,20 +286,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, ty: TokenType, message: &str) -> Option<> {
-        if let Some(t) = self.match_op(vec![ty]) {
-            match t.token_type {
-                ty => (),
-                _ => {
-                    eprintln!(
-                        "Parse error at line {}: {}",
-                        error.token.line, error.message
-                    );
-                    self.had_error = true;
-                    None
-                }
+    fn consume(&mut self, ops: TokenType, message: &str) -> Option<Stmt> {
+        if let Some(token) = self.match_op(vec![ops.clone()]) {
+            if token.token_type != ops {
+                eprintln!(
+                 "{}", message
+                );
+                self.had_error = true;
+                return None
             }
         }
+        None
     }
 
     fn statement(&mut self) -> Option<Stmt> {
@@ -316,17 +312,16 @@ impl<'a> Parser<'a> {
     fn printStatement(&mut self) -> Option<Stmt> {
         let value = self.expression().unwrap();
         self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
-        return Some(Stmt::print(value))
+        return Some(Stmt::print(value));
     }
 
     fn expressionStatement(&mut self) -> Option<Stmt> {
         let value = self.expression().unwrap();
         self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
-        return Some(Stmt::expr(value))
+        return Some(Stmt::expr(value));
     }
-    
-    pub fn program(&mut self) -> Option<Expr> {
 
+    pub fn program(&mut self) -> Option<Expr> {
         None
     }
 }
