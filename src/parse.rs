@@ -35,8 +35,8 @@ pub enum Expr {
 }
 
 pub enum Stmt {
-    expr(Expr),
-    print(Expr),
+    Expr(Expr),
+    Print(Expr),
 }
 
 impl Expr {
@@ -289,44 +289,74 @@ impl<'a> Parser<'a> {
     fn consume(&mut self, ops: TokenType, message: &str) -> Option<Stmt> {
         if let Some(token) = self.match_op(vec![ops.clone()]) {
             if token.token_type != ops {
-                eprintln!(
-                 "{}", message
-                );
+                eprintln!("{}", message);
                 self.had_error = true;
-                return None
+                return None;
             }
         }
         None
+    }
+
+    fn print_statement(&mut self) -> Option<Stmt> {
+        let value = self.expression().unwrap();
+        self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
+        return Some(Stmt::Print(value));
+    }
+
+    fn expression_statement(&mut self) -> Option<Stmt> {
+        let value = self.expression().unwrap();
+        self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
+        return Some(Stmt::Expr(value));
     }
 
     fn statement(&mut self) -> Option<Stmt> {
         if let Some(print) = self.match_op(vec![TokenType::PRINT]) {
             match print.token_type {
-                TokenType::PRINT => return self.printStatement(),
-                _ => return self.expressionStatement(),
+                TokenType::PRINT => return self.print_statement(),
+                _ => return self.expression_statement(),
             }
         }
         None
     }
 
-    fn printStatement(&mut self) -> Option<Stmt> {
-        let value = self.expression().unwrap();
-        self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
-        return Some(Stmt::print(value));
-    }
-
-    fn expressionStatement(&mut self) -> Option<Stmt> {
-        let value = self.expression().unwrap();
-        self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
-        return Some(Stmt::expr(value));
-    }
-
-    pub fn program(&mut self) -> Option<Expr> {
-        None
+    pub fn program(&mut self) -> Option<Stmt> {
+        self.statement()
     }
 }
 
 pub fn parse(filename: &str) -> i32 {
+    let file_contents = match fs::read_to_string(filename) {
+        Ok(contents) => contents,
+        Err(_) => {
+            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
+            return 1;
+        }
+    };
+
+    if file_contents.is_empty() {
+        println!("EOF  null");
+        return 0;
+    }
+
+    let mut lexer = Lexer::new();
+    let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
+
+    let mut parser = Parser::new(&mut tokens);
+
+    match parser.parse() {
+        Some(expr) => {
+            println!("{}", expr.ast_print());
+            if lexer.had_error() || parser.had_error() {
+                65
+            } else {
+                0
+            }
+        }
+        None => 65,
+    }
+}
+
+pub fn run(filename: &str) -> i32 {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(_) => {
