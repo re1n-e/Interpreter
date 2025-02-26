@@ -1,4 +1,5 @@
 use crate::lexer::{Lexer, Token, TokenType};
+use crate::evaluate::Interpreter;
 use std::any::Any;
 use std::fs;
 use std::io::{self, Write};
@@ -374,10 +375,18 @@ pub fn run(filename: &str) -> i32 {
     let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
 
     let mut parser = Parser::new(&mut tokens);
+    let interpreter = Interpreter::new();
 
-    match parser.parse() {
-        Some(expr) => {
-            println!("{}", expr.ast_print());
+    match parser.program() {
+        Some(stmt) => {
+            match stmt {
+                Stmt::Expr(expr) => {
+                    Ok(interpreter.evaluate(&expr)),
+                }
+                Stmt::Print(expr) => {
+                    Ok(interpreter.evaluate(&expr)),
+                }
+            }
             if lexer.had_error() || parser.had_error() {
                 65
             } else {
