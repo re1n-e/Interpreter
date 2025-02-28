@@ -1,8 +1,8 @@
 use crate::lexer::{Lexer, Token, TokenType};
-use crate::evaluate::Interpreter;
+use crate::evaluate::{Interpreter, Value};
 use std::any::Any;
 use std::fs;
-use std::io::{self, Write};
+
 
 fn parse_number(val: &str, token: Token) -> Result<Expr, ParseError> {
     match val.parse::<f64>() {
@@ -35,6 +35,7 @@ pub enum Expr {
     },
 }
 
+#[derive(Debug)]
 pub enum Stmt {
     Expr(Expr),
     Print(Expr),
@@ -287,41 +288,99 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, ops: TokenType, message: &str) -> Option<Stmt> {
-        if let Some(token) = self.match_op(vec![ops.clone()]) {
-            if token.token_type != ops {
-                eprintln!("{}", message);
-                self.had_error = true;
-                return None;
+    fn consume(&mut self, expected_type: TokenType, message: &str) -> bool {
+        if let Some(token) = self.peek() {
+            if token.token_type == expected_type {
+                self.advance();
+                return true;
             }
         }
-        None
+        
+        eprintln!("{}", message);
+        self.had_error = true;
+        false
     }
 
-    fn print_statement(&mut self) -> Option<Stmt> {
-        let value = self.expression().unwrap();
-        self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
-        return Some(Stmt::Print(value));
+    fn print_statement(&mut self) -> Result<Stmt, ParseError> {
+        let expr = self.expression()?;
+        
+        if !self.consume(TokenType::SEMICOLON, "Expect ';' after value.") {
+            return Err(ParseError {
+                token: Token {
+                    token_type: TokenType::Eof,
+                    lexeme: String::from(""),
+                    line: 0, 
+                },
+                message: String::from("Expected ';' after print statement."),
+            });
+        }
+        
+        Ok(Stmt::Print(expr))
     }
 
-    fn expression_statement(&mut self) -> Option<Stmt> {
-        let value = self.expression().unwrap();
-        self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
-        return Some(Stmt::Expr(value));
+    fn expression_statement(&mut self) -> Result<Stmt, ParseError> {
+        let expr = self.expression()?;
+        
+        if !self.consume(TokenType::SEMICOLON, "Expect ';' after expression.") {
+            return Err(ParseError {
+                token: Token {
+                    token_type: TokenType::Eof,
+                    lexeme: String::from(""),
+                    line: 0,
+                },
+                message: String::from("Expected ';' after expression statement."),
+            });
+        }
+        
+        Ok(Stmt::Expr(expr))
     }
 
-    fn statement(&mut self) -> Option<Stmt> {
-        if let Some(print) = self.match_op(vec![TokenType::PRINT]) {
-            match print.token_type {
-                TokenType::PRINT => return self.print_statement(),
-                _ => return self.expression_statement(),
+    fn statement(&mut self) -> Result<Stmt, ParseError> {
+        if let Some(token) = self.peek() {
+            if token.token_type == TokenType::PRINT {
+                self.advance(); 
+                return self.print_statement();
             }
         }
-        None
+        
+        self.expression_statement()
     }
 
-    pub fn program(&mut self) -> Option<Stmt> {
-        self.statement()
+    pub fn parse_statements(&mut self) -> Vec<Stmt> {
+        let mut statements = Vec::new();
+        
+        while self.peek().is_some() && self.peek().unwrap().token_type != TokenType::Eof {
+            match self.statement() {
+                Ok(stmt) => statements.push(stmt),
+                Err(error) => {
+                    eprintln!(
+                        "Parse error at line {}: {}",
+                        error.token.line, error.message
+                    );
+                    self.had_error = true;
+                    self.synchronize(); 
+                }
+            }
+        }
+        
+        statements
+    }
+    
+    fn synchronize(&mut self) {
+        self.advance(); 
+        
+        while let Some(token) = self.peek().cloned() {
+            if let Some(prev) = self.tokens.peek() {
+                if prev.token_type == TokenType::SEMICOLON {
+                    return;
+                }
+            }
+
+            match token.token_type {
+                TokenType::PRINT => return,
+                _ => { self.advance(); } 
+            }
+        }
     }
 }
 
@@ -329,7 +388,7 @@ pub fn parse(filename: &str) -> i32 {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(_) => {
-            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
+            eprintln!("Failed to read file {}", filename);
             return 1;
         }
     };
@@ -361,7 +420,7 @@ pub fn run(filename: &str) -> i32 {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(_) => {
-            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
+            eprintln!("Failed to read file {}", filename);
             return 1;
         }
     };
@@ -377,22 +436,41 @@ pub fn run(filename: &str) -> i32 {
     let mut parser = Parser::new(&mut tokens);
     let interpreter = Interpreter::new();
 
-    match parser.program() {
-        Some(stmt) => {
-            match stmt {
-                Stmt::Expr(expr) => {
-                    Ok(interpreter.evaluate(&expr)),
+    let statements = parser.parse_statements();
+    
+    if parser.had_error() || lexer.had_error() {
+        return 65; 
+    }
+
+    for stmt in statements {
+        match stmt {
+            Stmt::Expr(expr) => {
+                match interpreter.evaluate(&expr) {
+                    Ok(_value) => (),
+                    Err(error) => {
+                        eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
+                        return 70; 
+                    }
                 }
-                Stmt::Print(expr) => {
-                    Ok(interpreter.evaluate(&expr)),
+            },
+            Stmt::Print(expr) => {
+                match interpreter.evaluate(&expr) {
+                    Ok(value) => {
+                        match value {
+                            Value::Number(n) => println!("{}", n),
+                            Value::String(s) => println!("{}", s),
+                            Value::Boolean(b) => println!("{}", b),
+                            Value::Nil => println!("nil"),
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
+                        return 70; 
+                    }
                 }
-            }
-            if lexer.had_error() || parser.had_error() {
-                65
-            } else {
-                0
             }
         }
-        None => 65,
     }
+    
+    0
 }

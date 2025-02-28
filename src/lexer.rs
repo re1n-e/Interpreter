@@ -71,6 +71,7 @@ pub struct Token {
 
 pub struct Lexer {
     had_error: bool,
+    line: usize,
 }
 
 fn keywords(key: &str) -> Option<TokenType> {
@@ -97,29 +98,34 @@ fn keywords(key: &str) -> Option<TokenType> {
 
 impl Lexer {
     pub fn new() -> Self {
-        Self { had_error: false }
+        Self {
+            had_error: false,
+            line: 0,
+        }
     }
 
     pub fn lex(&mut self, source: &str) -> Vec<Token> {
-        let mut tokens = Vec::new();
+        let mut tokens: Vec<Token> = Vec::new();
+        let mut char_iter = source.chars().peekable();
+        self.line = 0;
 
-        for (line_number, line) in source.lines().enumerate() {
-            let mut char_iter = line.chars().peekable();
+        let mut current_line = 1;
 
-            while let Some(ch) = char_iter.next() {
-                if let Some(token) = self.scan_token(ch, &mut char_iter, line_number + 1) {
-                    match token.token_type {
-                        TokenType::COMMENT => break,
-                        _ => tokens.push(token),
-                    }
-                }
+        while let Some(ch) = char_iter.next() {
+            if ch == '\n' {
+                self.line += 1;
+                current_line = self.line + 1;
+            }
+
+            if let Some(token) = self.scan_token(ch, &mut char_iter, current_line) {
+                tokens.push(token)
             }
         }
 
         tokens.push(Token {
             token_type: TokenType::Eof,
             lexeme: String::from("EOF"),
-            line: source.lines().count(),
+            line: current_line,
         });
 
         tokens
@@ -127,7 +133,6 @@ impl Lexer {
 
     fn scan_token(&mut self, ch: char, chars: &mut Peekable<Chars>, line: usize) -> Option<Token> {
         match ch {
-            // Single-character tokens
             '(' => Some(self.make_token(TokenType::LEFT_PAREN, "(", line)),
             ')' => Some(self.make_token(TokenType::RIGHT_PAREN, ")", line)),
             '{' => Some(self.make_token(TokenType::LEFT_BRACE, "{", line)),
@@ -175,7 +180,15 @@ impl Lexer {
             // Comments
             '/' => {
                 if chars.peek() == Some(&'/') {
-                    Some(self.make_token(TokenType::COMMENT, "/", line))
+                    chars.next();
+
+                    while let Some(ch) = chars.peek() {
+                        if *ch == '\n' {
+                            break;
+                        }
+                        chars.next();
+                    }
+                    None
                 } else {
                     Some(self.make_token(TokenType::SLASH, "/", line))
                 }
@@ -202,18 +215,27 @@ impl Lexer {
 
     fn scan_string(&mut self, chars: &mut Peekable<Chars>, line: usize) -> Option<Token> {
         let mut value = String::new();
-
-        while let Some(ch) = chars.next() {
-            if ch == '"' {
-                return Some(Token {
-                    token_type: TokenType::STRING(value.clone()),
-                    lexeme: format!("\"{}\"", value),
-                    line,
-                });
+        let mut line = line;
+        while chars.peek().is_some() {
+            if let Some(ch) = chars.peek() {
+                match ch {
+                    '"' => {
+                        chars.next();
+                        return Some(Token {
+                            token_type: TokenType::STRING(value.clone()),
+                            lexeme: format!("\"{}\"", value),
+                            line,
+                        });
+                    }
+                    '\n' => {
+                        line += 1;
+                        value.push(*ch);
+                    }
+                    _ => value.push(*ch),
+                }
             }
-            value.push(ch);
+            chars.next();
         }
-
         self.error(line, "Unterminated string.");
         None
     }

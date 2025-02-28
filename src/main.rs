@@ -16,6 +16,7 @@ fn main() {
         "tokenize" => exit(lexer::run_lexer(&args[2])),
         "parse" => exit(parse::parse(&args[2])),
         "evaluate" => exit(evaluate::evaluate(&args[2])),
+        "run" => exit(parse::run(&args[2])),
         cmd => {
             writeln!(io::stderr(), "Unknown command: {}", cmd).unwrap();
             exit(1);
