@@ -1,5 +1,5 @@
-use crate::parse::{Parser, Expr};
 use crate::lexer::{Lexer, Token, TokenType};
+use crate::parse::{Expr, Parser};
 use std::fs;
 use std::io::{self, Write};
 
@@ -20,11 +20,11 @@ pub struct RuntimeError {
 
 type Result<T> = std::result::Result<T, RuntimeError>;
 
-pub struct Interpreter;
+pub struct Evaluate;
 
-impl Interpreter {
+impl Evaluate {
     pub fn new() -> Self {
-        Interpreter
+        Evaluate
     }
 
     pub fn evaluate(&self, expr: &Expr) -> Result<Value> {
@@ -43,7 +43,7 @@ impl Interpreter {
             Expr::Grouping { expression } => self.evaluate(expression),
             Expr::Unary { operator, right } => {
                 let right = self.evaluate(right)?;
-                
+
                 match operator.token_type {
                     TokenType::MINUS => {
                         if let Value::Number(n) = right {
@@ -64,29 +64,43 @@ impl Interpreter {
                     }),
                 }
             }
-            Expr::Binary { left, operator, right } => {
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => {
                 let left = self.evaluate(left)?;
                 let right = self.evaluate(right)?;
 
                 match operator.token_type {
-                    TokenType::MINUS => self.number_operation(&left, &right, |a, b| a - b, operator),
-                    TokenType::SLASH => self.number_operation(&left, &right, |a, b| a / b, operator),
-                    TokenType::STAR => self.number_operation(&left, &right, |a, b| a * b, operator),
-                    TokenType::PLUS => {
-                        match (&left, &right) {
-                            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
-                            (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{}{}", a, b))),
-                            _ => Err(RuntimeError {
-                                message: "Operands must be two numbers or two strings.".to_string(),
-                                token: operator.clone(),
-                                line: operator.line,
-                            }),
-                        }
+                    TokenType::MINUS => {
+                        self.number_operation(&left, &right, |a, b| a - b, operator)
                     }
-                    TokenType::GREATER => self.number_operation(&left, &right, |a, b| a > b, operator),
-                    TokenType::GREATER_EQUAL => self.number_operation(&left, &right, |a, b| a >= b, operator),
+                    TokenType::SLASH => {
+                        self.number_operation(&left, &right, |a, b| a / b, operator)
+                    }
+                    TokenType::STAR => self.number_operation(&left, &right, |a, b| a * b, operator),
+                    TokenType::PLUS => match (&left, &right) {
+                        (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
+                        (Value::String(a), Value::String(b)) => {
+                            Ok(Value::String(format!("{}{}", a, b)))
+                        }
+                        _ => Err(RuntimeError {
+                            message: "Operands must be two numbers or two strings.".to_string(),
+                            token: operator.clone(),
+                            line: operator.line,
+                        }),
+                    },
+                    TokenType::GREATER => {
+                        self.number_operation(&left, &right, |a, b| a > b, operator)
+                    }
+                    TokenType::GREATER_EQUAL => {
+                        self.number_operation(&left, &right, |a, b| a >= b, operator)
+                    }
                     TokenType::LESS => self.number_operation(&left, &right, |a, b| a < b, operator),
-                    TokenType::LESS_EQUAL => self.number_operation(&left, &right, |a, b| a <= b, operator),
+                    TokenType::LESS_EQUAL => {
+                        self.number_operation(&left, &right, |a, b| a <= b, operator)
+                    }
                     TokenType::BANG_EQUAL => Ok(Value::Boolean(!self.is_equal(&left, &right))),
                     TokenType::EQUAL_EQUAL => Ok(Value::Boolean(self.is_equal(&left, &right))),
                     _ => Err(RuntimeError {
@@ -96,10 +110,17 @@ impl Interpreter {
                     }),
                 }
             }
+            _ => Ok(Value::Nil),
         }
     }
 
-    fn number_operation<T, F>(&self, left: &Value, right: &Value, op: F, operator: &Token) -> Result<Value>
+    fn number_operation<T, F>(
+        &self,
+        left: &Value,
+        right: &Value,
+        op: F,
+        operator: &Token,
+    ) -> Result<Value>
     where
         F: Fn(f64, f64) -> T,
         T: Into<Value>,
@@ -163,35 +184,34 @@ pub fn evaluate(filename: &str) -> i32 {
     let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
 
     let mut parser = Parser::new(&mut tokens);
-    let interpreter = Interpreter::new();
-    
+    let Evaluate = Evaluate::new();
+
     match parser.parse() {
-        Some(expr) => {
-            match interpreter.evaluate(&expr) {
-                Ok(value) => {
-                    match value {
-                        Value::Number(n) => println!("{}", n),
-                        Value::String(s) => println!("{}", s),
-                        Value::Boolean(b) => println!("{}", b),
-                        Value::Nil => println!("nil"),
-                    };
-                    if lexer.had_error() || parser.had_error() {
-                        65
-                    } else {
-                        0
-                    }
-                },
-                Err(error) => {
-                    writeln!(
-                        io::stderr(),
-                        "[line {}] Runtime Error: {}",
-                        error.line,
-                        error.message
-                    ).unwrap();
-                    70
+        Some(expr) => match Evaluate.evaluate(&expr) {
+            Ok(value) => {
+                match value {
+                    Value::Number(n) => println!("{}", n),
+                    Value::String(s) => println!("{}", s),
+                    Value::Boolean(b) => println!("{}", b),
+                    Value::Nil => println!("nil"),
+                };
+                if lexer.had_error() || parser.had_error() {
+                    65
+                } else {
+                    0
                 }
             }
-        }
-        None => 65
+            Err(error) => {
+                writeln!(
+                    io::stderr(),
+                    "[line {}] Runtime Error: {}",
+                    error.line,
+                    error.message
+                )
+                .unwrap();
+                70
+            }
+        },
+        None => 65,
     }
 }

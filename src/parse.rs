@@ -1,6 +1,7 @@
-use crate::evaluate::{Interpreter, Value};
+use crate::evaluate::{Evaluate, RuntimeError, Value};
 use crate::lexer::{Lexer, Token, TokenType};
 use std::any::Any;
+use std::collections::HashMap;
 use std::fs;
 
 fn parse_number(val: &str, token: Token) -> Result<Expr, ParseError> {
@@ -33,8 +34,9 @@ pub enum Expr {
         right: Box<Expr>,
     },
     Variable {
-        token: Token,
+        name: String,
     },
+    None,
 }
 
 #[derive(Debug)]
@@ -42,6 +44,32 @@ pub enum Stmt {
     Expr(Expr),
     Print(Expr),
     Var(Token, Expr),
+}
+struct Environment {
+    map: HashMap<String, Box<dyn Any>>,
+}
+
+impl Environment {
+    fn new() -> Self {
+        Environment {
+            map: HashMap::new(),
+        }
+    }
+
+    fn define(&mut self, name: String, value: Box<dyn Any>) {
+        self.map.insert(name, value);
+    }
+
+    fn get(&self, name: Token) -> Result<&Box<dyn Any>, RuntimeError> {
+        if let Some(name) = self.map.get(&name.lexeme) {
+            return Ok(name);
+        }
+        Err(RuntimeError {
+            message: format!("Undefined variable {}.", name.lexeme),
+            token: name,
+            line: 0,
+        })
+    }
 }
 
 impl Expr {
@@ -80,6 +108,7 @@ impl Expr {
             Expr::Unary { operator, right } => {
                 format!("({} {})", operator.lexeme, right.ast_print())
             }
+            _ => String::new(),
         }
     }
 }
@@ -226,6 +255,11 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(Expr::Literal { value: Box::new(s) })
                 }
+                TokenType::IDENTIFIER(val) => {
+                    let val = val.clone();
+                    self.advance();
+                    Ok(Expr::Variable { name: val })
+                }
                 TokenType::LEFT_PAREN => {
                     self.advance();
                     let expr = self.expression()?;
@@ -291,58 +325,60 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, expected_type: &TokenType, message: &str) -> bool {
-        if let Some(token) = self.peek() {
+    fn consume(&mut self, expected_type: &TokenType, message: &str) -> Option<Token> {
+        if let Some(token) = self.peek().cloned() {
             match (&token.token_type, expected_type) {
                 (TokenType::IDENTIFIER(_), TokenType::IDENTIFIER(_)) => {
                     self.advance();
-                    return true;
-                },
+                    return Some(token.clone());
+                }
                 _ if token.token_type == *expected_type => {
                     self.advance();
-                    return true;
-                },
-                _ => {}
+                    return Some(token.clone());
+                }
+                _ => return None,
             }
         }
-        
+
         eprintln!("{}", message);
         self.had_error = true;
-        false
+        None
     }
 
     fn print_statement(&mut self) -> Result<Stmt, ParseError> {
         let expr = self.expression()?;
 
-        if !self.consume(&TokenType::SEMICOLON, "Expect ';' after value.") {
-            return Err(ParseError {
-                token: Token {
-                    token_type: TokenType::Eof,
-                    lexeme: String::from(""),
-                    line: 0,
-                },
-                message: String::from("Expected ';' after print statement."),
-            });
-        }
-
-        Ok(Stmt::Print(expr))
+        let _ = match self.consume(&TokenType::SEMICOLON, "Expect ';' after value.") {
+            Some(_) => return Ok(Stmt::Print(expr)),
+            None => {
+                return Err(ParseError {
+                    token: Token {
+                        token_type: TokenType::Eof,
+                        lexeme: String::from(""),
+                        line: 0,
+                    },
+                    message: String::from("Expected ';' after print statement."),
+                })
+            }
+        };
     }
 
     fn expression_statement(&mut self) -> Result<Stmt, ParseError> {
         let expr = self.expression()?;
 
-        if !self.consume(&TokenType::SEMICOLON, "Expect ';' after expression.") {
-            return Err(ParseError {
-                token: Token {
-                    token_type: TokenType::Eof,
-                    lexeme: String::from(""),
-                    line: 0,
-                },
-                message: String::from("Expected ';' after expression statement."),
-            });
-        }
-
-        Ok(Stmt::Expr(expr))
+        let _ = match self.consume(&TokenType::SEMICOLON, "Expect ';' after expression.") {
+            Some(_) => return Ok(Stmt::Print(expr)),
+            None => {
+                return Err(ParseError {
+                    token: Token {
+                        token_type: TokenType::Eof,
+                        lexeme: String::from(""),
+                        line: 0,
+                    },
+                    message: String::from("Expected ';' after expression statement."),
+                })
+            }
+        };
     }
 
     fn statement(&mut self) -> Result<Stmt, ParseError> {
@@ -370,15 +406,35 @@ impl<'a> Parser<'a> {
     }
 
     fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
-        let name = self.consume(&TokenType::IDENTIFIER(String::new()),"Expect variable name.");
-        
+        let name = match self.consume(
+            &TokenType::IDENTIFIER(String::new()),
+            "Expect variable name.",
+        ) {
+            Some(token) => token,
+            None => {
+                return Err(ParseError {
+                    token: Token {
+                        token_type: TokenType::Eof,
+                        lexeme: String::from(""),
+                        line: 0,
+                    },
+                    message: String::from("Expect variable name."),
+                })
+            }
+        };
+
+        let mut initializer = Expr::None;
+        if let Some(_) = self.match_op(vec![TokenType::EQUAL]) {
+            initializer = self.expression()?;
+        }
+        return Ok(Stmt::Var(name, initializer));
     }
 
     pub fn parse_statements(&mut self) -> Vec<Stmt> {
         let mut statements = Vec::new();
 
         while self.peek().is_some() && self.peek().unwrap().token_type != TokenType::Eof {
-            match self.statement() {
+            match self.declaration().unwrap() {
                 Ok(stmt) => statements.push(stmt),
                 Err(error) => {
                     eprintln!(
@@ -464,8 +520,8 @@ pub fn run(filename: &str) -> i32 {
     let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
 
     let mut parser = Parser::new(&mut tokens);
-    let interpreter = Interpreter::new();
-
+    let Evaluate = Evaluate::new();
+    let mut environment = Environment::new();
     let statements = parser.parse_statements();
 
     if parser.had_error() || lexer.had_error() {
@@ -474,14 +530,14 @@ pub fn run(filename: &str) -> i32 {
 
     for stmt in statements {
         match stmt {
-            Stmt::Expr(expr) => match interpreter.evaluate(&expr) {
+            Stmt::Expr(expr) => match Evaluate.evaluate(&expr) {
                 Ok(_value) => (),
                 Err(error) => {
                     eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
                     return 70;
                 }
             },
-            Stmt::Print(expr) => match interpreter.evaluate(&expr) {
+            Stmt::Print(expr) => match Evaluate.evaluate(&expr) {
                 Ok(value) => match value {
                     Value::Number(n) => println!("{}", n),
                     Value::String(s) => println!("{}", s),
@@ -493,6 +549,24 @@ pub fn run(filename: &str) -> i32 {
                     return 70;
                 }
             },
+            Stmt::Var(token, expr) => {
+                let value: Box<dyn Any> = match &expr {
+                    Expr::None => Box::new(()),
+                    _ => match Evaluate.evaluate(&expr) {
+                        Ok(value) => match value {
+                            Value::Number(n) => Box::new(n),
+                            Value::String(s) => Box::new(s),
+                            Value::Boolean(b) => Box::new(b),
+                            Value::Nil => Box::new(()),
+                        },
+                        Err(error) => {
+                            eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
+                            return 70;
+                        }
+                    },
+                };
+                environment.define(token.lexeme, value);
+            }
         }
     }
 
