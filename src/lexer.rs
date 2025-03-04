@@ -1,53 +1,47 @@
 use std::fs;
 use std::io::{self, Write};
+use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
-
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
-#[derive(Debug, PartialEq, Clone)]
+
 pub enum TokenType {
-    // Grouping tokens
+    // Single-character tokens.
     LEFT_PAREN,
     RIGHT_PAREN,
     LEFT_BRACE,
     RIGHT_BRACE,
-
-    // Single-character tokens
-    STAR,
-    DOT,
     COMMA,
-    PLUS,
+    DOT,
     MINUS,
+    PLUS,
     SEMICOLON,
     SLASH,
-    COMMENT,
+    STAR,
 
-    // One or two character tokens
-    EQUAL,
-    EQUAL_EQUAL,
+    // One or two character tokens.
     BANG,
     BANG_EQUAL,
-    LESS,
-    LESS_EQUAL,
+    EQUAL,
+    EQUAL_EQUAL,
     GREATER,
     GREATER_EQUAL,
+    LESS,
+    LESS_EQUAL,
 
-    // Literals
-    STRING(String),
+    // Literals.
+    IDENTIFIER,
+    STRING,
+    NUMBER,
 
-    // Number
-    NUMBER(String, String),
-
-    // Special tokens
-    IDENTIFIER(String),
-
-    // IDENTIFIER
+    // Keywords.
     AND,
     CLASS,
     ELSE,
     FALSE,
-    FOR,
     FUN,
+    FOR,
     IF,
     NIL,
     OR,
@@ -59,19 +53,7 @@ pub enum TokenType {
     VAR,
     WHILE,
 
-    Eof,
-}
-
-#[derive(Debug, Clone)]
-pub struct Token {
-    pub token_type: TokenType,
-    pub lexeme: String,
-    pub line: usize,
-}
-
-pub struct Lexer {
-    had_error: bool,
-    line: usize,
+    EOF,
 }
 
 fn keywords(key: &str) -> Option<TokenType> {
@@ -96,139 +78,122 @@ fn keywords(key: &str) -> Option<TokenType> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Literal {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+    Identifier(String),
+    None,
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Boolean(value) => write!(f, "{}", value),
+            Literal::String(value) => write!(f, "{}", value),
+            Literal::Number(value) => write!(f, "{:?}", value),
+            Literal::Identifier(value) => write!(f, "{}", value),
+            Literal::None => write!(f, "null"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub token_type: TokenType,
+    pub lexeme: String,
+    pub line: usize,
+    pub literal: Literal,
+}
+
+fn to_string(token: Token) -> String {
+    format!("{:?} {} {}", token.token_type, token.lexeme, token.literal)
+}
+
+struct Lexer {
+    tokens: Vec<Token>,
+    had_error: bool,
+    line: usize,
+}
+
 impl Lexer {
     pub fn new() -> Self {
-        Self {
+        Lexer {
+            tokens: Vec::new(),
             had_error: false,
-            line: 0,
+            line: 1,
         }
     }
 
-    pub fn lex(&mut self, source: &str) -> Vec<Token> {
-        let mut tokens: Vec<Token> = Vec::new();
-        let mut char_iter = source.chars().peekable();
-        self.line = 0;
-
-        let mut current_line = 1;
-
-        while let Some(ch) = char_iter.next() {
-            if ch == '\n' {
-                self.line += 1;
-                current_line = self.line + 1;
-            }
-
-            if let Some(token) = self.scan_token(ch, &mut char_iter, current_line) {
-                tokens.push(token)
-            }
-        }
-
-        tokens.push(Token {
-            token_type: TokenType::Eof,
-            lexeme: String::from("EOF"),
-            line: current_line,
-        });
-
-        tokens
+    pub fn error(&mut self, line: usize, message: &str) {
+        self.report(line, "", message);
     }
 
-    fn scan_token(&mut self, ch: char, chars: &mut Peekable<Chars>, line: usize) -> Option<Token> {
-        match ch {
-            '(' => Some(self.make_token(TokenType::LEFT_PAREN, "(", line)),
-            ')' => Some(self.make_token(TokenType::RIGHT_PAREN, ")", line)),
-            '{' => Some(self.make_token(TokenType::LEFT_BRACE, "{", line)),
-            '}' => Some(self.make_token(TokenType::RIGHT_BRACE, "}", line)),
-            '*' => Some(self.make_token(TokenType::STAR, "*", line)),
-            '.' => Some(self.make_token(TokenType::DOT, ".", line)),
-            ',' => Some(self.make_token(TokenType::COMMA, ",", line)),
-            '+' => Some(self.make_token(TokenType::PLUS, "+", line)),
-            '-' => Some(self.make_token(TokenType::MINUS, "-", line)),
-            ';' => Some(self.make_token(TokenType::SEMICOLON, ";", line)),
+    pub fn report(&mut self, line: usize, location: &str, message: &str) {
+        eprintln!("[line {}] Error{}: {}", line, location, message);
+        self.had_error = true;
+    }
 
-            // Two-character tokens
-            '=' => self.match_next(
-                chars,
-                '=',
-                '=',
-                TokenType::EQUAL_EQUAL,
-                TokenType::EQUAL,
-                line,
-            ),
-            '!' => self.match_next(
-                chars,
-                '!',
-                '=',
-                TokenType::BANG_EQUAL,
-                TokenType::BANG,
-                line,
-            ),
-            '<' => self.match_next(
-                chars,
-                '<',
-                '=',
-                TokenType::LESS_EQUAL,
-                TokenType::LESS,
-                line,
-            ),
-            '>' => self.match_next(
-                chars,
-                '>',
-                '=',
-                TokenType::GREATER_EQUAL,
-                TokenType::GREATER,
-                line,
-            ),
-            // Comments
-            '/' => {
-                if chars.peek() == Some(&'/') {
-                    chars.next();
+    pub fn had_error(&self) -> bool {
+        self.had_error
+    }
 
-                    while let Some(ch) = chars.peek() {
-                        if *ch == '\n' {
-                            break;
-                        }
-                        chars.next();
-                    }
-                    None
-                } else {
-                    Some(self.make_token(TokenType::SLASH, "/", line))
-                }
+    pub fn reset_error(&mut self) {
+        self.had_error = false;
+    }
+
+    fn add_token(&mut self, token_type: TokenType, current: String) {
+        self.add_token_literal(token_type, current, Literal::None);
+    }
+    
+    fn add_token_literal(&mut self,  token_type: TokenType, current: String, literal: Literal) {
+        self.tokens.push(Token {
+            token_type,
+            lexeme: current,
+            line: self.line,
+            literal,
+        })
+    }
+
+    fn match_next(
+        &mut self,
+        chars: &mut Peekable<Chars>,
+        current: char,
+        expected: char,
+        double_type: TokenType,
+        single_type: TokenType,
+    ) {
+        let (token_type, lexeme) = if chars.peek() == Some(&expected) {
+            chars.next();
+            (double_type, format!("{}{}", current, expected))
+        } else {
+            (single_type, current.to_string())
+        };
+        self.add_token(token_type, lexeme);
+    }
+
+    fn handle_slash(&mut self, chars: &mut Peekable<Chars>) {
+        chars.next();
+        if let Some(&'/') = chars.peek() {
+            while chars.peek().map_or(false, |&c| c != '\n') {
+                chars.next();
             }
-
-            // String literals
-            '"' => self.scan_string(chars, line),
-
-            // Number
-            '0'..='9' => self.scan_num(ch, chars, line),
-
-            // Whitespace
-            ch if ch.is_whitespace() => None,
-
-            id if id == '_' || id.is_alphanumeric() => self.scan_identifier(id, chars, line),
-
-            // Unexpected characters
-            _ => {
-                self.error(line, &format!("Unexpected character: {}", ch));
-                None
-            }
+        } else {
+            self.add_token(TokenType::SLASH, '/'.to_string());
         }
     }
 
-    fn scan_string(&mut self, chars: &mut Peekable<Chars>, line: usize) -> Option<Token> {
+    fn scan_string(&mut self, chars: &mut Peekable<Chars>) {
         let mut value = String::new();
-        let mut line = line;
         while chars.peek().is_some() {
             if let Some(ch) = chars.peek() {
                 match ch {
                     '"' => {
-                        chars.next();
-                        return Some(Token {
-                            token_type: TokenType::STRING(value.clone()),
-                            lexeme: format!("\"{}\"", value),
-                            line,
-                        });
+                        return self.add_token_literal(TokenType::STRING, value.clone(), Literal::String(value.clone()));
                     }
                     '\n' => {
-                        line += 1;
+                        self.line += 1;
                         value.push(*ch);
                     }
                     _ => value.push(*ch),
@@ -236,61 +201,30 @@ impl Lexer {
             }
             chars.next();
         }
-        self.error(line, "Unterminated string.");
-        None
+        self.error(self.line, "Unterminated string.");
     }
 
-    fn scan_num(&mut self, num: char, chars: &mut Peekable<Chars>, line: usize) -> Option<Token> {
-        let mut value = String::from(num);
-        let mut org_value = String::from(num);
-        let mut zeroes = String::new();
-        let mut deci = false;
-        while let Some(ch) = chars.peek() {
-            match ch {
-                '0' => {
-                    if deci {
-                        zeroes.push('0');
-                    } else {
-                        value.push(*ch);
-                    }
+    fn scan_num(&mut self, chars: &mut Peekable<Chars>) {
+        let mut value = String::new();
+        while chars.peek().is_some() {
+            if let Some(digit) = chars.peek() {
+                match digit {
+                    '0'..='9' => value.push(*digit),
+                    '.' => value.push(*digit),
+                    _ => break,
                 }
-                '1'..='9' => {
-                    if !zeroes.is_empty() {
-                        value.push_str(&zeroes);
-                        zeroes.clear();
-                    }
-                    value.push(*ch);
-                }
-                '.' => {
-                    value.push(*ch);
-                    deci = true;
-                }
-                _ => break,
             }
-            org_value.push(*ch);
-            chars.next();
+            chars.next(); 
         }
-
-        if !deci {
-            value.push_str(&".0");
-        } else if value.ends_with('.') {
-            value.push('0');
-        }
-
-        Some(Token {
-            token_type: TokenType::NUMBER(org_value.clone(), value.clone()),
-            lexeme: format!("\"{}\"", value),
-            line,
-        })
+        let num = value.parse::<f64>().unwrap();
+        self.add_token_literal(TokenType::NUMBER, value, Literal::Number(num));
     }
 
     fn scan_identifier(
         &mut self,
-        num: char,
         chars: &mut Peekable<Chars>,
-        line: usize,
-    ) -> Option<Token> {
-        let mut identifier = String::from(num);
+    ) {
+        let mut identifier = String::from("");
         while let Some(ch) = chars.peek() {
             match ch {
                 ch if ch.is_alphanumeric() || ch == &'_' => identifier.push(*ch),
@@ -300,87 +234,76 @@ impl Lexer {
         }
 
         if let Some(reserved) = keywords(&identifier) {
-            Some(Token {
-                token_type: reserved,
-                lexeme: format!("{}", identifier),
-                line,
-            })
+            self.add_token(reserved, identifier);
         } else {
-            Some(Token {
-                token_type: TokenType::IDENTIFIER(identifier.clone()),
-                lexeme: format!("\"{}\"", identifier),
-                line,
-            })
+            self.add_token(TokenType::IDENTIFIER, identifier);
         }
     }
 
-    fn match_next(
-        &self,
-        chars: &mut Peekable<Chars>,
-        current: char,
-        expected: char,
-        double_type: TokenType,
-        single_type: TokenType,
-        line: usize,
-    ) -> Option<Token> {
-        let (token_type, lexeme) = if chars.peek() == Some(&expected) {
-            chars.next();
-            (double_type, format!("{}{}", current, expected))
-        } else {
-            (single_type, current.to_string())
+    pub fn scan_token(&mut self, source: &str) {
+        let mut chars = source.chars().peekable();
+
+        while let Some(current) = chars.next() {
+            match current {
+                '(' => self.add_token(TokenType::LEFT_PAREN, current.to_string()),
+                ')' => self.add_token(TokenType::RIGHT_PAREN, current.to_string()),
+                '{' => self.add_token(TokenType::LEFT_BRACE, current.to_string()),
+                '}' => self.add_token(TokenType::RIGHT_BRACE, current.to_string()),
+                ',' => self.add_token(TokenType::COMMA, current.to_string()),
+                '.' => self.add_token(TokenType::DOT, current.to_string()),
+                '-' => self.add_token(TokenType::MINUS, current.to_string()),
+                '+' => self.add_token(TokenType::PLUS, current.to_string()),
+                ';' => self.add_token(TokenType::SEMICOLON, current.to_string()),
+                '*' => self.add_token(TokenType::STAR, current.to_string()),
+                '!' => self.match_next(&mut chars, current, '=', TokenType::BANG_EQUAL, TokenType::BANG),
+                '=' => self.match_next(&mut chars, current, '=', TokenType::EQUAL_EQUAL, TokenType::EQUAL),
+                '<' => self.match_next(&mut chars, current, '=', TokenType::LESS_EQUAL, TokenType::LESS),
+                '>' => self.match_next(&mut chars, current, '=', TokenType::GREATER_EQUAL, TokenType::GREATER),
+                '/' => self.handle_slash(&mut chars),
+                '"' => self.scan_string(&mut chars),
+                '0'..='9' => self.scan_num(&mut chars),
+                id if id == '_' || id.is_alphanumeric() => self.scan_identifier(&mut chars),
+                _ => {
+                    // Handle unexpected characters
+                    if current.is_whitespace() {
+                        if current == '\n' {
+                            self.line += 1;
+                        }
+                    } else {
+                        self.error(self.line, &format!("Unexpected character: {}", current));
+                    }
+                }
+            }
+        }
+        self.add_token(TokenType::EOF, "".to_string());
+    }
+
+    pub fn lex(&mut self, filename: &str) {
+        let file_contents = match fs::read_to_string(filename) {
+            Ok(contents) => contents,
+            Err(_) => {
+                writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
+                return;
+            }
         };
-
-        Some(self.make_token(token_type, &lexeme, line))
-    }
-
-    fn make_token(&self, token_type: TokenType, lexeme: &str, line: usize) -> Token {
-        Token {
-            token_type,
-            lexeme: String::from(lexeme),
-            line,
+    
+        if file_contents.is_empty() {
+            println!("EOF  null");
+            return;
         }
-    }
+        self.scan_token(&file_contents);
+        for token in &self.tokens {
+            println!("{}", to_string(token.clone()));
+        }
 
-    fn error(&mut self, line: usize, message: &str) {
-        eprintln!("[line {}] Error: {}", line, message);
-        self.had_error = true;
-    }
-
-    pub fn had_error(&self) -> bool {
-        self.had_error
+        if self.had_error {
+            std::process::exit(65)
+        } 
+        std::process::exit(0)
     }
 }
 
-pub fn run_lexer(filename: &str) -> i32 {
-    let file_contents = match fs::read_to_string(filename) {
-        Ok(contents) => contents,
-        Err(_) => {
-            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
-            return 1;
-        }
-    };
-
-    if file_contents.is_empty() {
-        println!("EOF  null");
-        return 0;
-    }
-
+pub fn run_lexer(filename: &str) {
     let mut lexer = Lexer::new();
-    let tokens = lexer.lex(&file_contents);
-
-    for token in tokens {
-        match token.token_type {
-            TokenType::STRING(ref s) => println!("STRING \"{}\" {}", s, s),
-            TokenType::NUMBER(org_val, val) => println!("NUMBER {org_val} {val}"),
-            TokenType::IDENTIFIER(iden) => println!("IDENTIFIER {} null", iden),
-            TokenType::Eof => println!("EOF  null"),
-            _ => println!("{:?} {} null", token.token_type, token.lexeme),
-        }
-    }
-
-    if lexer.had_error() {
-        65
-    } else {
-        0
-    }
+    lexer.lex(filename);
 }
