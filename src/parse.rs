@@ -1,20 +1,6 @@
-use crate::evaluate::{Evaluate, RuntimeError, Value};
-use crate::lexer::{Lexer, Token, TokenType};
-use std::any::Any;
-use std::collections::HashMap;
+use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use std::fs;
-
-fn parse_number(val: &str, token: Token) -> Result<Expr, ParseError> {
-    match val.parse::<f64>() {
-        Ok(num) => Ok(Expr::Literal {
-            value: Box::new((num, val.to_string())),
-        }),
-        Err(_) => Err(ParseError {
-            token,
-            message: format!("Invalid number: {}", val),
-        }),
-    }
-}
+use std::io::{self, Write};
 
 #[derive(Debug)]
 pub enum Expr {
@@ -27,49 +13,12 @@ pub enum Expr {
         expression: Box<Expr>,
     },
     Literal {
-        value: Box<dyn Any>,
+        value: Literal,
     },
     Unary {
         operator: Token,
         right: Box<Expr>,
     },
-    Variable {
-        name: String,
-    },
-    None,
-}
-
-#[derive(Debug)]
-pub enum Stmt {
-    Expr(Expr),
-    Print(Expr),
-    Var(Token, Expr),
-}
-struct Environment {
-    map: HashMap<String, Box<dyn Any>>,
-}
-
-impl Environment {
-    fn new() -> Self {
-        Environment {
-            map: HashMap::new(),
-        }
-    }
-
-    fn define(&mut self, name: String, value: Box<dyn Any>) {
-        self.map.insert(name, value);
-    }
-
-    fn get(&self, name: Token) -> Result<&Box<dyn Any>, RuntimeError> {
-        if let Some(name) = self.map.get(&name.lexeme) {
-            return Ok(name);
-        }
-        Err(RuntimeError {
-            message: format!("Undefined variable {}.", name.lexeme),
-            token: name,
-            line: 0,
-        })
-    }
 }
 
 impl Expr {
@@ -87,28 +36,17 @@ impl Expr {
                     right.ast_print()
                 )
             }
-            Expr::Grouping { expression } => {
-                format!("(group {})", expression.ast_print())
-            }
-            Expr::Literal { value } => {
-                if let Some(s) = value.downcast_ref::<String>() {
-                    s.clone()
-                } else if let Some(n) = value.downcast_ref::<f64>() {
-                    n.to_string()
-                } else if let Some(b) = value.downcast_ref::<bool>() {
-                    b.to_string()
-                } else if value.downcast_ref::<()>().is_some() {
-                    "nil".to_string()
-                } else if let Some((_, n)) = value.downcast_ref::<(f64, String)>() {
-                    n.to_string()
-                } else {
-                    "Unknown Literal".to_string()
-                }
-            }
+            Expr::Grouping { expression } => format!("(group {})", expression.ast_print()),
+            Expr::Literal { value } => match value {
+                Literal::String(s) => s.clone(),
+                Literal::Number(n) => format!("{:?}", n),
+                Literal::Boolean(b) => b.to_string(),
+                Literal::None => "nil".to_string(),
+                _ => "Unknown Literal".to_string(),
+            },
             Expr::Unary { operator, right } => {
                 format!("({} {})", operator.lexeme, right.ast_print())
             }
-            _ => String::new(),
         }
     }
 }
@@ -119,196 +57,19 @@ pub struct ParseError {
     message: String,
 }
 
-pub struct Parser<'a> {
-    tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>,
+struct Parser {
+    tokens: Vec<Token>,
     current: usize,
     had_error: bool,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a mut std::iter::Peekable<std::vec::IntoIter<Token>>) -> Self {
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
             tokens,
             current: 0,
             had_error: false,
         }
-    }
-
-    fn peek(&mut self) -> Option<&Token> {
-        self.tokens.peek()
-    }
-
-    fn advance(&mut self) -> Option<Token> {
-        self.current += 1;
-        self.tokens.next()
-    }
-
-    fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
-    }
-
-    fn equality(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.comparison()?;
-
-        while let Some(op) = self.match_op(vec![TokenType::BANG_EQUAL, TokenType::EQUAL_EQUAL]) {
-            let right = self.comparison()?;
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator: op,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.term()?;
-
-        while let Some(op) = self.match_op(vec![
-            TokenType::GREATER,
-            TokenType::GREATER_EQUAL,
-            TokenType::LESS,
-            TokenType::LESS_EQUAL,
-        ]) {
-            let right = self.term()?;
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator: op,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn term(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.factor()?;
-
-        while let Some(op) = self.match_op(vec![TokenType::MINUS, TokenType::PLUS]) {
-            let right = self.factor()?;
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator: op,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn factor(&mut self) -> Result<Expr, ParseError> {
-        let mut expr = self.unary()?;
-
-        while let Some(op) = self.match_op(vec![TokenType::SLASH, TokenType::STAR]) {
-            let right = self.unary()?;
-            expr = Expr::Binary {
-                left: Box::new(expr),
-                operator: op,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn unary(&mut self) -> Result<Expr, ParseError> {
-        if let Some(op) = self.match_op(vec![TokenType::BANG, TokenType::MINUS]) {
-            let right = self.unary()?;
-            return Ok(Expr::Unary {
-                operator: op,
-                right: Box::new(right),
-            });
-        }
-
-        self.primary()
-    }
-
-    fn primary(&mut self) -> Result<Expr, ParseError> {
-        if let Some(token) = self.peek().cloned() {
-            match &token.token_type {
-                TokenType::FALSE => {
-                    self.advance();
-                    Ok(Expr::Literal {
-                        value: Box::new(false),
-                    })
-                }
-                TokenType::TRUE => {
-                    self.advance();
-                    Ok(Expr::Literal {
-                        value: Box::new(true),
-                    })
-                }
-                TokenType::NIL => {
-                    self.advance();
-                    Ok(Expr::Literal {
-                        value: Box::new(()),
-                    })
-                }
-                TokenType::NUMBER(_, val) => {
-                    let val = val.clone();
-                    self.advance();
-                    parse_number(&val, token.clone())
-                }
-                TokenType::STRING(s) => {
-                    let s = s.clone();
-                    self.advance();
-                    Ok(Expr::Literal { value: Box::new(s) })
-                }
-                TokenType::IDENTIFIER(val) => {
-                    let val = val.clone();
-                    self.advance();
-                    Ok(Expr::Variable { name: val })
-                }
-                TokenType::LEFT_PAREN => {
-                    self.advance();
-                    let expr = self.expression()?;
-
-                    match self.peek() {
-                        Some(t) if t.token_type == TokenType::RIGHT_PAREN => {
-                            self.advance();
-                            Ok(Expr::Grouping {
-                                expression: Box::new(expr),
-                            })
-                        }
-                        Some(t) => Err(ParseError {
-                            token: t.clone(),
-                            message: String::from("Expected ')' after expression."),
-                        }),
-                        None => Err(ParseError {
-                            token: token.clone(),
-                            message: String::from("Unexpected end of input, expected ')'"),
-                        }),
-                    }
-                }
-                _ => Err(ParseError {
-                    token: token.clone(),
-                    message: String::from("Expected expression."),
-                }),
-            }
-        } else {
-            Err(ParseError {
-                token: Token {
-                    token_type: TokenType::Eof,
-                    lexeme: String::from(""),
-                    line: 0,
-                },
-                message: String::from("Unexpected end of input."),
-            })
-        }
-    }
-
-    fn match_op(&mut self, ops: Vec<TokenType>) -> Option<Token> {
-        if let Some(token) = self.peek() {
-            if ops.contains(&token.token_type) {
-                return self.advance();
-            }
-        }
-        None
-    }
-
-    pub fn had_error(&self) -> bool {
-        self.had_error
     }
 
     pub fn parse(&mut self) -> Option<Expr> {
@@ -325,250 +86,203 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, expected_type: &TokenType, message: &str) -> Option<Token> {
-        if let Some(token) = self.peek().cloned() {
-            match (&token.token_type, expected_type) {
-                (TokenType::IDENTIFIER(_), TokenType::IDENTIFIER(_)) => {
-                    self.advance();
-                    return Some(token.clone());
-                }
-                _ if token.token_type == *expected_type => {
-                    self.advance();
-                    return Some(token.clone());
-                }
-                _ => return None,
+    fn expression(&mut self) -> Result<Expr, ParseError> {
+        self.equality()
+    }
+
+    fn peek(&self) -> Option<Token> {
+        if self.current < self.tokens.len() {
+            return Some(self.tokens[self.current].clone());
+        }
+        None
+    }
+
+    fn consume(&mut self, token_type: TokenType, message: &str) -> Option<ParseError> {
+        if let Some(peek) = self.peek() {
+            if peek.token_type == token_type {
+                self.advance();
+                return None;
             }
         }
-
-        eprintln!("{}", message);
         self.had_error = true;
-        None
+        Some(ParseError {
+            token: self.peek().unwrap(),
+            message: message.to_string(),
+        })
     }
 
-    fn print_statement(&mut self) -> Result<Stmt, ParseError> {
-        let expr = self.expression()?;
-
-        let _ = match self.consume(&TokenType::SEMICOLON, "Expect ';' after value.") {
-            Some(_) => return Ok(Stmt::Print(expr)),
-            None => {
-                return Err(ParseError {
-                    token: Token {
-                        token_type: TokenType::Eof,
-                        lexeme: String::from(""),
-                        line: 0,
-                    },
-                    message: String::from("Expected ';' after print statement."),
-                })
-            }
-        };
-    }
-
-    fn expression_statement(&mut self) -> Result<Stmt, ParseError> {
-        let expr = self.expression()?;
-
-        let _ = match self.consume(&TokenType::SEMICOLON, "Expect ';' after expression.") {
-            Some(_) => return Ok(Stmt::Print(expr)),
-            None => {
-                return Err(ParseError {
-                    token: Token {
-                        token_type: TokenType::Eof,
-                        lexeme: String::from(""),
-                        line: 0,
-                    },
-                    message: String::from("Expected ';' after expression statement."),
-                })
-            }
-        };
-    }
-
-    fn statement(&mut self) -> Result<Stmt, ParseError> {
-        if let Some(token) = self.peek() {
-            if token.token_type == TokenType::PRINT {
-                self.advance();
-                return self.print_statement();
-            }
-        }
-
-        self.expression_statement()
-    }
-
-    fn declaration(&mut self) -> Option<Result<Stmt, ParseError>> {
-        if let Some(token) = self.peek() {
-            if token.token_type == TokenType::VAR {
-                self.advance();
-                return Some(self.var_declaration());
-            }
-            return Some(self.statement());
-        }
-
-        self.synchronize();
-        None
-    }
-
-    fn var_declaration(&mut self) -> Result<Stmt, ParseError> {
-        let name = match self.consume(
-            &TokenType::IDENTIFIER(String::new()),
-            "Expect variable name.",
-        ) {
-            Some(token) => token,
-            None => {
-                return Err(ParseError {
-                    token: Token {
-                        token_type: TokenType::Eof,
-                        lexeme: String::from(""),
-                        line: 0,
-                    },
-                    message: String::from("Expect variable name."),
-                })
-            }
-        };
-
-        let mut initializer = Expr::None;
-        if let Some(_) = self.match_op(vec![TokenType::EQUAL]) {
-            initializer = self.expression()?;
-        }
-        return Ok(Stmt::Var(name, initializer));
-    }
-
-    pub fn parse_statements(&mut self) -> Vec<Stmt> {
-        let mut statements = Vec::new();
-
-        while self.peek().is_some() && self.peek().unwrap().token_type != TokenType::Eof {
-            match self.declaration().unwrap() {
-                Ok(stmt) => statements.push(stmt),
-                Err(error) => {
-                    eprintln!(
-                        "Parse error at line {}: {}",
-                        error.token.line, error.message
-                    );
-                    self.had_error = true;
-                    self.synchronize();
-                }
-            }
-        }
-
-        statements
-    }
-
-    fn synchronize(&mut self) {
-        self.advance();
-
-        while let Some(token) = self.peek().cloned() {
-            if let Some(prev) = self.tokens.peek() {
-                if prev.token_type == TokenType::SEMICOLON {
-                    return;
-                }
-            }
-
-            match token.token_type {
-                TokenType::PRINT => return,
-                _ => {
+    fn match_token(&mut self, token_types: Vec<TokenType>) -> Option<Token> {
+        if let Some(peek_token) = self.peek() {
+            for token_type in token_types {
+                if token_type == peek_token.token_type {
                     self.advance();
+                    return Some(peek_token);
                 }
             }
+        }
+        None
+    }
+
+    fn advance(&mut self) {
+        self.current += 1;
+    }
+
+    fn equality(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.comparison()?;
+        while let Some(op) = self.match_token(vec![TokenType::BANG_EQUAL, TokenType::EQUAL_EQUAL]) {
+            let right = self.comparison()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            }
+        }
+        Ok(expr)
+    }
+
+    fn comparison(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.term()?;
+        while let Some(op) = self.match_token(vec![
+            TokenType::GREATER,
+            TokenType::GREATER_EQUAL,
+            TokenType::LESS,
+            TokenType::LESS_EQUAL,
+        ]) {
+            let right = self.term()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            }
+        }
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.factor()?;
+        while let Some(op) = self.match_token(vec![TokenType::MINUS, TokenType::PLUS]) {
+            let right = self.factor()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            }
+        }
+        Ok(expr)
+    }
+
+    fn factor(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.unary()?;
+        while let Some(op) = self.match_token(vec![TokenType::SLASH, TokenType::STAR]) {
+            let right = self.unary()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            }
+        }
+        Ok(expr)
+    }
+
+    fn unary(&mut self) -> Result<Expr, ParseError> {
+        if let Some(op) = self.match_token(vec![TokenType::BANG, TokenType::MINUS]) {
+            let right = self.unary()?;
+            return Ok(Expr::Unary {
+                operator: op,
+                right: Box::new(right),
+            });
+        }
+        self.primary()
+    }
+
+    fn primary(&mut self) -> Result<Expr, ParseError> {
+        if let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::FALSE => {
+                    self.advance();
+                    Ok(Expr::Literal {
+                        value: Literal::Boolean(false),
+                    })
+                }
+                TokenType::TRUE => {
+                    self.advance();
+                    Ok(Expr::Literal {
+                        value: Literal::Boolean(true),
+                    })
+                }
+                TokenType::NIL => {
+                    self.advance();
+                    Ok(Expr::Literal {
+                        value: Literal::None,
+                    })
+                }
+                TokenType::NUMBER => {
+                    self.advance();
+                    Ok(Expr::Literal {
+                        value: Literal::Number(token.lexeme.parse::<f64>().unwrap()),
+                    })
+                }
+                TokenType::STRING => {
+                    self.advance();
+                    Ok(Expr::Literal {
+                        value: Literal::String(format!("{}", token.literal)),
+                    })
+                }
+                TokenType::LEFT_PAREN => {
+                    self.advance();
+                    let expr = self.expression()?;
+                    if let Some(err) =
+                        self.consume(TokenType::RIGHT_PAREN, "Expect ')' after expression.")
+                    {
+                        return Err(err);
+                    }
+                    Ok(Expr::Grouping {
+                        expression: Box::new(expr),
+                    })
+                }
+                _ => Err(ParseError {
+                    token: token.clone(),
+                    message: String::from("Expected expression."),
+                }),
+            }
+        } else {
+            Err(ParseError {
+                token: Token {
+                    token_type: TokenType::EOF,
+                    lexeme: String::from(""),
+                    line: 0,
+                    literal: Literal::None,
+                },
+                message: String::from("Unexpected end of input."),
+            })
         }
     }
 }
 
-pub fn parse(filename: &str) -> i32 {
+pub fn run_parser(filename: &str) {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(_) => {
-            eprintln!("Failed to read file {}", filename);
-            return 1;
+            writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
+            return;
         }
     };
 
     if file_contents.is_empty() {
         println!("EOF  null");
-        return 0;
+        return;
     }
 
-    let mut lexer = Lexer::new();
-    let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
-
-    let mut parser = Parser::new(&mut tokens);
-
+    let mut parser = Parser::new(return_tokens(&file_contents));
     match parser.parse() {
         Some(expr) => {
             println!("{}", expr.ast_print());
-            if lexer.had_error() || parser.had_error() {
-                65
+            if parser.had_error {
+                std::process::exit(65)
             } else {
-                0
+                std::process::exit(0)
             }
         }
-        None => 65,
+        None => std::process::exit(65),
     }
-}
-
-pub fn run(filename: &str) -> i32 {
-    let file_contents = match fs::read_to_string(filename) {
-        Ok(contents) => contents,
-        Err(_) => {
-            eprintln!("Failed to read file {}", filename);
-            return 1;
-        }
-    };
-
-    if file_contents.is_empty() {
-        println!("EOF  null");
-        return 0;
-    }
-
-    let mut lexer = Lexer::new();
-    let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
-
-    let mut parser = Parser::new(&mut tokens);
-    let Evaluate = Evaluate::new();
-    let mut environment = Environment::new();
-    let statements = parser.parse_statements();
-
-    if parser.had_error() || lexer.had_error() {
-        return 65;
-    }
-
-    for stmt in statements {
-        match stmt {
-            Stmt::Expr(expr) => match Evaluate.evaluate(&expr) {
-                Ok(_value) => (),
-                Err(error) => {
-                    eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
-                    return 70;
-                }
-            },
-            Stmt::Print(expr) => match Evaluate.evaluate(&expr) {
-                Ok(value) => match value {
-                    Value::Number(n) => println!("{}", n),
-                    Value::String(s) => println!("{}", s),
-                    Value::Boolean(b) => println!("{}", b),
-                    Value::Nil => println!("nil"),
-                },
-                Err(error) => {
-                    eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
-                    return 70;
-                }
-            },
-            Stmt::Var(token, expr) => {
-                let value: Box<dyn Any> = match &expr {
-                    Expr::None => Box::new(()),
-                    _ => match Evaluate.evaluate(&expr) {
-                        Ok(value) => match value {
-                            Value::Number(n) => Box::new(n),
-                            Value::String(s) => Box::new(s),
-                            Value::Boolean(b) => Box::new(b),
-                            Value::Nil => Box::new(()),
-                        },
-                        Err(error) => {
-                            eprintln!("[line {}] Runtime Error: {}", error.line, error.message);
-                            return 70;
-                        }
-                    },
-                };
-                environment.define(token.lexeme, value);
-            }
-        }
-    }
-
-    0
 }
