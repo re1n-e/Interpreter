@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(non_camel_case_types)]
 
 pub enum TokenType {
@@ -78,7 +78,7 @@ fn keywords(key: &str) -> Option<TokenType> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Number(f64),
     String(String),
@@ -99,7 +99,7 @@ impl fmt::Display for Literal {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
@@ -135,14 +135,6 @@ impl Lexer {
         self.had_error = true;
     }
 
-    pub fn had_error(&self) -> bool {
-        self.had_error
-    }
-
-    pub fn reset_error(&mut self) {
-        self.had_error = false;
-    }
-
     fn add_token(&mut self, token_type: TokenType, current: String) {
         self.add_token_literal(token_type, current, Literal::None);
     }
@@ -174,7 +166,6 @@ impl Lexer {
     }
 
     fn handle_slash(&mut self, chars: &mut Peekable<Chars>) {
-        chars.next();
         if let Some(&'/') = chars.peek() {
             while chars.peek().map_or(false, |&c| c != '\n') {
                 chars.next();
@@ -190,7 +181,8 @@ impl Lexer {
             if let Some(ch) = chars.peek() {
                 match ch {
                     '"' => {
-                        return self.add_token_literal(TokenType::STRING, value.clone(), Literal::String(value.clone()));
+                        chars.next();
+                        return self.add_token_literal(TokenType::STRING, format!("\"{}\"", value), Literal::String(value.clone()));
                     }
                     '\n' => {
                         self.line += 1;
@@ -204,8 +196,8 @@ impl Lexer {
         self.error(self.line, "Unterminated string.");
     }
 
-    fn scan_num(&mut self, chars: &mut Peekable<Chars>) {
-        let mut value = String::new();
+    fn scan_num(&mut self, chars: &mut Peekable<Chars>, cur: char) {
+        let mut value = String::from(cur);
         while chars.peek().is_some() {
             if let Some(digit) = chars.peek() {
                 match digit {
@@ -223,8 +215,9 @@ impl Lexer {
     fn scan_identifier(
         &mut self,
         chars: &mut Peekable<Chars>,
+        cur: char,
     ) {
-        let mut identifier = String::from("");
+        let mut identifier = String::from(cur);
         while let Some(ch) = chars.peek() {
             match ch {
                 ch if ch.is_alphanumeric() || ch == &'_' => identifier.push(*ch),
@@ -261,8 +254,8 @@ impl Lexer {
                 '>' => self.match_next(&mut chars, current, '=', TokenType::GREATER_EQUAL, TokenType::GREATER),
                 '/' => self.handle_slash(&mut chars),
                 '"' => self.scan_string(&mut chars),
-                '0'..='9' => self.scan_num(&mut chars),
-                id if id == '_' || id.is_alphanumeric() => self.scan_identifier(&mut chars),
+                '0'..='9' => self.scan_num(&mut chars, current),
+                id if id == '_' || id.is_alphanumeric() => self.scan_identifier(&mut chars, current),
                 _ => {
                     // Handle unexpected characters
                     if current.is_whitespace() {
@@ -301,6 +294,15 @@ impl Lexer {
         } 
         std::process::exit(0)
     }
+}
+
+pub fn return_tokens(source: &str) -> Vec<Token> {
+    let mut lexer = Lexer::new();
+    lexer.scan_token(source);
+    if lexer.had_error {
+        std::process::exit(65)
+    }
+    lexer.tokens
 }
 
 pub fn run_lexer(filename: &str) {

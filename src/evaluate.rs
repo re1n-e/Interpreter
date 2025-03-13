@@ -1,5 +1,6 @@
-use crate::lexer::{Lexer, Token, TokenType};
-use crate::parse::{Expr, Parser};
+use crate::lexer::{return_tokens, Literal, Token, TokenType};
+use crate::parse::{Expr, Parser, Stmt};
+use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 
@@ -9,6 +10,17 @@ pub enum Value {
     String(String),
     Boolean(bool),
     Nil,
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Number(value) => write!(f, "{}", value),
+            Value::String(value) => write!(f, "{}", value),
+            Value::Boolean(value) => write!(f, "{:?}", value),
+            Value::Nil => write!(f, "nil"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -27,19 +39,36 @@ impl Evaluate {
         Evaluate
     }
 
+    pub fn visit_expression_stmt(&self, expr: &Expr) -> Result<Value> {
+        self.evaluate(expr)
+    }
+
+    pub fn visit_print_stmt(&self, expr: &Expr) {
+        let value = self.evaluate(expr);
+        match value {
+            Ok(v) => println!("{}", v),
+            Err(error) => {
+                writeln!(
+                    io::stderr(),
+                    "[line {}] Runtime Error: {}",
+                    error.line,
+                    error.message
+                )
+                .unwrap();
+                std::process::exit(70)
+            }
+        }
+    }
+
     pub fn evaluate(&self, expr: &Expr) -> Result<Value> {
         match expr {
-            Expr::Literal { value } => {
-                if let Some(s) = value.downcast_ref::<String>() {
-                    Ok(Value::String(s.clone()))
-                } else if let Some((n, _)) = value.downcast_ref::<(f64, String)>() {
-                    Ok(Value::Number(*n))
-                } else if let Some(b) = value.downcast_ref::<bool>() {
-                    Ok(Value::Boolean(*b))
-                } else {
-                    Ok(Value::Nil)
-                }
-            }
+            Expr::Literal { value } => match value {
+                Literal::Boolean(b) => Ok(Value::Boolean(*b)),
+                Literal::Number(b) => Ok(Value::Number(*b)),
+                Literal::String(b) => Ok(Value::String(b.clone())),
+                Literal::None => Ok(Value::Nil),
+                _ => Ok(Value::Nil),
+            },
             Expr::Grouping { expression } => self.evaluate(expression),
             Expr::Unary { operator, right } => {
                 let right = self.evaluate(right)?;
@@ -110,7 +139,6 @@ impl Evaluate {
                     }),
                 }
             }
-            _ => Ok(Value::Nil),
         }
     }
 
@@ -166,52 +194,39 @@ impl From<f64> for Value {
     }
 }
 
-pub fn evaluate(filename: &str) -> i32 {
+pub fn evaluate(filename: &str) {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(_) => {
             writeln!(io::stderr(), "Failed to read file {}", filename).unwrap();
-            return 1;
+            return;
         }
     };
 
     if file_contents.is_empty() {
         println!("EOF  null");
-        return 0;
+        return;
     }
 
-    let mut lexer = Lexer::new();
-    let mut tokens = lexer.lex(&file_contents).into_iter().peekable();
-
-    let mut parser = Parser::new(&mut tokens);
+    let mut parser = Parser::new(return_tokens(&file_contents));
     let Evaluate = Evaluate::new();
-
-    match parser.parse() {
-        Some(expr) => match Evaluate.evaluate(&expr) {
-            Ok(value) => {
-                match value {
-                    Value::Number(n) => println!("{}", n),
-                    Value::String(s) => println!("{}", s),
-                    Value::Boolean(b) => println!("{}", b),
-                    Value::Nil => println!("nil"),
-                };
-                if lexer.had_error() || parser.had_error() {
-                    65
-                } else {
-                    0
+    let statement = parser.parse();
+    for stmt in statement {
+        match stmt {
+            Stmt::Expression(expr) => match Evaluate.visit_expression_stmt(&expr) {
+                Ok(value) => println!("{}", value),
+                Err(error) => {
+                    writeln!(
+                        io::stderr(),
+                        "[line {}] Runtime Error: {}",
+                        error.line,
+                        error.message
+                    )
+                    .unwrap();
+                    std::process::exit(70)
                 }
-            }
-            Err(error) => {
-                writeln!(
-                    io::stderr(),
-                    "[line {}] Runtime Error: {}",
-                    error.line,
-                    error.message
-                )
-                .unwrap();
-                70
-            }
-        },
-        None => 65,
+            },
+            Stmt::Print(expr) => Evaluate.visit_print_stmt(&expr),
+        }
     }
 }

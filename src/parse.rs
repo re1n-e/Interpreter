@@ -57,10 +57,15 @@ pub struct ParseError {
     message: String,
 }
 
-struct Parser {
+pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
     had_error: bool,
+}
+
+pub enum Stmt {
+    Expression(Expr),
+    Print(Expr),
 }
 
 impl Parser {
@@ -72,9 +77,30 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Option<Expr> {
-        match self.expression() {
-            Ok(expr) => Some(expr),
+    pub fn parse(&mut self) -> Vec<Stmt> {
+        let mut statements: Vec<Stmt> = Vec::new();
+        while self.peek().is_some() {
+            match self.statement() {
+                Some(stmt) => statements.push(stmt),
+                _ => std::process::exit(65),
+            }
+            self.advance();
+        }
+        statements
+    }
+
+    fn statement(&mut self) -> Option<Stmt> {
+        if let Some(_) = self.match_token(vec![TokenType::PRINT]) {
+            return self.print_statement()
+        }
+        self.expression_statement()
+    }
+
+    fn print_statement(&mut self) -> Option<Stmt> {
+        let value = self.expression();
+        self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
+        match value {
+            Ok(v) => Some(Stmt::Print(v)),
             Err(error) => {
                 eprintln!(
                     "Parse error at line {}: {}",
@@ -83,6 +109,22 @@ impl Parser {
                 self.had_error = true;
                 None
             }
+        }
+    }
+
+    fn expression_statement(&mut self) -> Option<Stmt> {
+        let expr = self.expression();
+        self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
+        match expr {
+            Ok(v) => Some(Stmt::Expression(v)),
+            Err(error) => {
+                eprintln!(
+                    "Parse error at line {}: {}",
+                    error.token.line, error.message
+                );
+                self.had_error = true;
+                None
+            }        
         }
     }
 
@@ -274,15 +316,18 @@ pub fn run_parser(filename: &str) {
     }
 
     let mut parser = Parser::new(return_tokens(&file_contents));
-    match parser.parse() {
-        Some(expr) => {
-            println!("{}", expr.ast_print());
-            if parser.had_error {
-                std::process::exit(65)
-            } else {
-                std::process::exit(0)
+    let statements = parser.parse();
+    for stmt in statements {
+        match stmt {
+            Stmt::Expression(expr) => {
+                println!("{}", expr.ast_print());
             }
+            Stmt::Print(_) => (),
         }
-        None => std::process::exit(65),
+    }
+    
+    // Only exit with error code if there was an error during parsing
+    if parser.had_error {
+        std::process::exit(65);
     }
 }
