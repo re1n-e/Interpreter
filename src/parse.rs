@@ -79,19 +79,29 @@ impl Parser {
 
     pub fn parse(&mut self) -> Vec<Stmt> {
         let mut statements: Vec<Stmt> = Vec::new();
-        while self.peek().is_some() {
-            match self.statement() {
-                Some(stmt) => statements.push(stmt),
-                _ => std::process::exit(65),
+
+        while !self.is_at_end() {
+            if let Some(stmt) = self.statement() {
+                statements.push(stmt);
+            } else {
+                std::process::exit(65);
             }
-            self.advance();
         }
+
         statements
+    }
+
+    fn is_at_end(&self) -> bool {
+        if self.current >= self.tokens.len() {
+            return true;
+        }
+
+        matches!(self.tokens[self.current].token_type, TokenType::EOF)
     }
 
     fn statement(&mut self) -> Option<Stmt> {
         if let Some(_) = self.match_token(vec![TokenType::PRINT]) {
-            return self.print_statement()
+            return self.print_statement();
         }
         self.expression_statement()
     }
@@ -124,7 +134,7 @@ impl Parser {
                 );
                 self.had_error = true;
                 None
-            }        
+            }
         }
     }
 
@@ -282,10 +292,12 @@ impl Parser {
                         expression: Box::new(expr),
                     })
                 }
-                _ => Err(ParseError {
-                    token: token.clone(),
-                    message: String::from("Expected expression."),
-                }),
+                _ => {
+                    Err(ParseError {
+                        token: token.clone(),
+                        message: String::from("Expected expression."),
+                    })
+                }
             }
         } else {
             Err(ParseError {
@@ -322,12 +334,9 @@ pub fn run_parser(filename: &str) {
             Stmt::Expression(expr) => {
                 println!("{}", expr.ast_print());
             }
-            Stmt::Print(_) => (),
+            Stmt::Print(expr) => {
+                println!("{}", expr.ast_print());
+            }
         }
-    }
-    
-    // Only exit with error code if there was an error during parsing
-    if parser.had_error {
-        std::process::exit(65);
     }
 }

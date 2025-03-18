@@ -214,7 +214,7 @@ pub fn evaluate(filename: &str) {
     for stmt in statement {
         match stmt {
             Stmt::Expression(expr) => match Evaluate.visit_expression_stmt(&expr) {
-                Ok(value) => println!("{}", value),
+                Ok(_) => (),
                 Err(error) => {
                     writeln!(
                         io::stderr(),
