@@ -1,4 +1,5 @@
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
+use core::error;
 use std::fs;
 use std::io::{self, Write};
 
@@ -19,6 +20,10 @@ pub enum Expr {
         operator: Token,
         right: Box<Expr>,
     },
+    Variable {
+        name: Token,
+    },
+    Null,
 }
 
 impl Expr {
@@ -46,7 +51,9 @@ impl Expr {
             },
             Expr::Unary { operator, right } => {
                 format!("({} {})", operator.lexeme, right.ast_print())
-            }
+            },
+            Expr::Variable { name } => String::new(),
+            Expr::Null => String::new(),
         }
     }
 }
@@ -66,6 +73,7 @@ pub struct Parser {
 pub enum Stmt {
     Expression(Expr),
     Print(Expr),
+    Var(Token, Expr),
 }
 
 impl Parser {
@@ -81,10 +89,10 @@ impl Parser {
         let mut statements: Vec<Stmt> = Vec::new();
 
         while !self.is_at_end() {
-            if let Some(stmt) = self.statement() {
+            if let Some(stmt) = self.declaration() {
                 statements.push(stmt);
             } else {
-                std::process::exit(65);
+                self.synchronize();
             }
         }
 
@@ -99,6 +107,35 @@ impl Parser {
         matches!(self.tokens[self.current].token_type, TokenType::EOF)
     }
 
+    fn declaration(&mut self) -> Option<Stmt> {
+        if let Some(_) = self.match_token(vec![TokenType::VAR]) {
+            return self.var_declaration();
+        }
+        self.statement()
+    }
+
+    fn var_declaration(&mut self) -> Option<Stmt> {
+        let name = match self.consume(TokenType::IDENTIFIER, "Expect variable name.") {
+            Some(error) => {
+                eprintln!(
+                    "Parse error at line {}: {}",
+                    error.token.line, error.message
+                );
+                self.had_error = true;
+                return None;
+            },
+            None => self.tokens[self.current - 1].clone(),
+        };
+        let mut intializer = Expr::Null;
+        if let Some(_) = self.match_token(vec![TokenType::EQUAL]) {
+            match self.expression() {
+                Ok(expr) => intializer = expr,
+                Err(_) => (),
+            }
+        }
+        Some(Stmt::Var(name, intializer))
+    }
+
     fn statement(&mut self) -> Option<Stmt> {
         if let Some(_) = self.match_token(vec![TokenType::PRINT]) {
             return self.print_statement();
@@ -108,7 +145,13 @@ impl Parser {
 
     fn print_statement(&mut self) -> Option<Stmt> {
         let value = self.expression();
-        self.consume(TokenType::SEMICOLON, "Expect ';' after value.");
+        if let Some(error) = self.consume(TokenType::SEMICOLON, "Expect ';' after value.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            self.had_error = true;
+        }
         match value {
             Ok(v) => Some(Stmt::Print(v)),
             Err(error) => {
@@ -124,7 +167,13 @@ impl Parser {
 
     fn expression_statement(&mut self) -> Option<Stmt> {
         let expr = self.expression();
-        self.consume(TokenType::SEMICOLON, "Expect ';' after expression.");
+        if let Some(error) = self.consume(TokenType::SEMICOLON, "Expect ';' after expression.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            self.had_error = true;
+        }
         match expr {
             Ok(v) => Some(Stmt::Expression(v)),
             Err(error) => {
@@ -292,12 +341,13 @@ impl Parser {
                         expression: Box::new(expr),
                     })
                 }
-                _ => {
-                    Err(ParseError {
-                        token: token.clone(),
-                        message: String::from("Expected expression."),
-                    })
+                TokenType::IDENTIFIER => {
+                    return Ok(Expr::Variable { name: self.tokens[self.current - 1].clone() })
                 }
+                _ => Err(ParseError {
+                    token: token.clone(),
+                    message: String::from("Expected expression."),
+                }),
             }
         } else {
             Err(ParseError {
@@ -309,6 +359,30 @@ impl Parser {
                 },
                 message: String::from("Unexpected end of input."),
             })
+        }
+    }
+
+    fn synchronize(&mut self) {
+        self.advance();
+        while !self.is_at_end() {
+            if self.tokens[self.current - 1].token_type == TokenType::SEMICOLON {
+                return;
+            }
+
+            if let Some(_) = self.match_token(vec![
+                TokenType::CLASS,
+                TokenType::FUN,
+                TokenType::VAR,
+                TokenType::FOR,
+                TokenType::IF,
+                TokenType::WHILE,
+                TokenType::PRINT,
+                TokenType::RETURN,
+            ]) {
+                return;
+            }
+
+            self.advance();
         }
     }
 }
@@ -337,6 +411,7 @@ pub fn run_parser(filename: &str) {
             Stmt::Print(expr) => {
                 println!("{}", expr.ast_print());
             }
+            _ => (),
         }
     }
 }

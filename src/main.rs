@@ -15,8 +15,8 @@ fn main() {
     match args[1].as_str() {
         "tokenize" => lexer::run_lexer(&args[2]),
         "parse" => parse::run_parser(&args[2]),
-        "evaluate" => evaluate::evaluate(&args[2]),
-        "run" => evaluate::evaluate(&args[2]),
+        "evaluate" => evaluate::evaluate(&args[2], true),
+        "run" => evaluate::evaluate(&args[2], false),
         cmd => {
             writeln!(io::stderr(), "Unknown command: {}", cmd).unwrap();
             exit(1);

@@ -139,6 +139,16 @@ impl Evaluate {
                     }),
                 }
             }
+            _ => Err(RuntimeError {
+                message: "".to_string(),
+                token: Token{
+                    token_type: TokenType::NIL,
+                    lexeme: String::new(),
+                    line: 0,
+                    literal: Literal::None,
+                },
+                line: 0,
+            }),
         }
     }
 
@@ -194,7 +204,7 @@ impl From<f64> for Value {
     }
 }
 
-pub fn evaluate(filename: &str) {
+pub fn evaluate(filename: &str, flag: bool) {
     let file_contents = match fs::read_to_string(filename) {
         Ok(contents) => contents,
         Err(_) => {
@@ -214,7 +224,11 @@ pub fn evaluate(filename: &str) {
     for stmt in statement {
         match stmt {
             Stmt::Expression(expr) => match Evaluate.visit_expression_stmt(&expr) {
-                Ok(_) => (),
+                Ok(value) => {
+                    if flag {
+                        println!("{}", value);
+                    }
+                }
                 Err(error) => {
                     writeln!(
                         io::stderr(),
@@ -227,6 +241,7 @@ pub fn evaluate(filename: &str) {
                 }
             },
             Stmt::Print(expr) => Evaluate.visit_print_stmt(&expr),
+            _ => (),
         }
     }
 }
