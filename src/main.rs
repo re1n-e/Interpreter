@@ -4,6 +4,8 @@ use std::process::exit;
 pub mod evaluate;
 pub mod lexer;
 pub mod parse;
+pub mod interpreter;
+pub mod environment;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

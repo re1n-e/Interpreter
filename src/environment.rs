@@ -1,10 +1,9 @@
-use crate::{
-    evaluate::RuntimeError,
-    lexer::{Literal, Token},
-};
+use crate::lexer::Token;
+use crate::evaluate::{RuntimeError, Value};
 use std::collections::HashMap;
+
 pub struct Environment {
-    map: HashMap<String, Literal>,
+    map: HashMap<String, Value>,
 }
 
 impl Environment {
@@ -14,11 +13,11 @@ impl Environment {
         }
     }
 
-    fn define(&mut self, name: String, value: Literal) {
+    pub fn define(&mut self, name: String, value: Value) {
         self.map.insert(name, value);
     }
 
-    fn get(&mut self, name: Token) -> Result<Literal, RuntimeError> {
+    pub fn get(&self, name: Token) -> Result<Value, RuntimeError> {
         match self.map.get(&name.lexeme) {
             Some(val) => Ok(val.clone()),
             None => Err(RuntimeError {

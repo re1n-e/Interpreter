@@ -1,10 +1,11 @@
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use crate::parse::{Expr, Parser, Stmt};
+use crate::environment::Environment;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Number(f64),
     String(String),
@@ -32,18 +33,39 @@ pub struct RuntimeError {
 
 type Result<T> = std::result::Result<T, RuntimeError>;
 
-pub struct Evaluate;
+pub struct Evaluate {
+    environment: crate::environment::Environment,
+}
 
 impl Evaluate {
     pub fn new() -> Self {
-        Evaluate
+        Evaluate {
+            environment: Environment::new(),
+        }
     }
 
-    pub fn visit_expression_stmt(&self, expr: &Expr) -> Result<Value> {
+    fn visit_var_stmt(&mut self, expr: &Expr, name: &Token) {
+        let mut value = Value::Nil;
+        if !matches!(expr, Expr::Null) {
+            match self.evaluate(expr) {
+                Ok(val) => value = val,
+                Err(_) => (),
+            }
+        }
+        self.environment.define(name.lexeme.clone(), value);
+    }
+
+    fn visit_variable_expr(&self, name: Token) -> Result<Value> {
+        self.environment.get(name)
+    }
+
+    
+
+    fn visit_expression_stmt(&self, expr: &Expr) -> Result<Value> {
         self.evaluate(expr)
     }
 
-    pub fn visit_print_stmt(&self, expr: &Expr) {
+    fn visit_print_stmt(&self, expr: &Expr) {
         let value = self.evaluate(expr);
         match value {
             Ok(v) => println!("{}", v),
@@ -60,7 +82,7 @@ impl Evaluate {
         }
     }
 
-    pub fn evaluate(&self, expr: &Expr) -> Result<Value> {
+    fn evaluate(&self, expr: &Expr) -> Result<Value> {
         match expr {
             Expr::Literal { value } => match value {
                 Literal::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -141,7 +163,7 @@ impl Evaluate {
             }
             _ => Err(RuntimeError {
                 message: "".to_string(),
-                token: Token{
+                token: Token {
                     token_type: TokenType::NIL,
                     lexeme: String::new(),
                     line: 0,
