@@ -1,10 +1,13 @@
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
-use core::error;
 use std::fs;
 use std::io::{self, Write};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
+    Assign {
+        name: Token,
+        value: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         operator: Token,
@@ -51,9 +54,12 @@ impl Expr {
             },
             Expr::Unary { operator, right } => {
                 format!("({} {})", operator.lexeme, right.ast_print())
-            },
-            Expr::Variable { name } => String::new(),
-            Expr::Null => String::new(),
+            }
+            Expr::Variable { name } => format!("{}", name.lexeme),
+            Expr::Assign { name, value } => {
+                format!("(= {} {})", name.lexeme, value.ast_print())
+            }
+            Expr::Null => "null".to_string(),
         }
     }
 }
@@ -67,21 +73,24 @@ pub struct ParseError {
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
-    had_error: bool,
+    pub had_error: bool,
+    evaluate: bool,
 }
 
 pub enum Stmt {
+    Block(Vec<Stmt>),
     Expression(Expr),
     Print(Expr),
     Var(Token, Expr),
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Token>, flag: bool) -> Self {
         Parser {
             tokens,
             current: 0,
             had_error: false,
+            evaluate: flag,
         }
     }
 
@@ -123,7 +132,7 @@ impl Parser {
                 );
                 self.had_error = true;
                 return None;
-            },
+            }
             None => self.tokens[self.current - 1].clone(),
         };
         let mut intializer = Expr::Null;
@@ -133,6 +142,17 @@ impl Parser {
                 Err(_) => (),
             }
         }
+        if let Some(error) = self.consume(
+            TokenType::SEMICOLON,
+            "Expect ';' after variable declaration.",
+        ) {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            self.had_error = true;
+            return None;
+        }
         Some(Stmt::Var(name, intializer))
     }
 
@@ -140,7 +160,32 @@ impl Parser {
         if let Some(_) = self.match_token(vec![TokenType::PRINT]) {
             return self.print_statement();
         }
+        if let Some(_) = self.match_token(vec![TokenType::LEFT_BRACE]) {
+            return Some(Stmt::Block(self.block()));
+        }
         self.expression_statement()
+    }
+    
+    fn block(&mut self) -> Vec<Stmt> {
+        let mut statements: Vec<Stmt> = Vec::new();
+        while !self.is_at_end() && !matches!(self.peek().unwrap().token_type, TokenType::RIGHT_BRACE) {
+            if let Some(stmt) = self.declaration() {
+                statements.push(stmt);
+            } else {
+                self.synchronize();
+            }
+            self.advance();
+            println!("{:?} {:?}", self.tokens[self.current - 1].token_type, self.tokens[self.current].token_type);
+        }
+        if let Some(error) = self.consume(TokenType::RIGHT_BRACE, "Expect '}' after block.") {
+            println!("{:?} {:?}", self.tokens[self.current - 1].token_type, self.tokens[self.current].token_type);
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            self.had_error = true;
+        }
+        statements
     }
 
     fn print_statement(&mut self) -> Option<Stmt> {
@@ -167,13 +212,17 @@ impl Parser {
 
     fn expression_statement(&mut self) -> Option<Stmt> {
         let expr = self.expression();
-        if let Some(error) = self.consume(TokenType::SEMICOLON, "Expect ';' after expression.") {
-            eprintln!(
-                "Parse error at line {}: {}",
-                error.token.line, error.message
-            );
-            self.had_error = true;
+        if self.evaluate {
+            if let Some(error) = self.consume(TokenType::SEMICOLON, "Expect ';' after expression.")
+            {
+                eprintln!(
+                    "Parse error at line {}: {}",
+                    error.token.line, error.message
+                );
+                self.had_error = true;
+            }
         }
+
         match expr {
             Ok(v) => Some(Stmt::Expression(v)),
             Err(error) => {
@@ -188,7 +237,37 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Expr, ParseError> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Result<Expr, ParseError> {
+        let expr = self.equality();
+        if let Some(_) = self.match_token(vec![TokenType::EQUAL]) {
+            let equals = self.tokens[self.current - 1].clone();
+            let val = match self.assignment() {
+                Ok(val) => val,
+                Err(err) => return Err(err),
+            };
+
+            match expr {
+                Ok(value) => match value {
+                    Expr::Variable { name } => {
+                        return Ok(Expr::Assign {
+                            name,
+                            value: Box::new(val),
+                        })
+                    }
+                    _ => {
+                        return Err(ParseError {
+                            token: equals,
+                            message: "Invalid assignment target.".to_string(),
+                        })
+                    }
+                },
+                Err(err) => return Err(err),
+            }
+        }
+        expr
     }
 
     fn peek(&self) -> Option<Token> {
@@ -204,11 +283,22 @@ impl Parser {
                 self.advance();
                 return None;
             }
+
+            self.had_error = true;
+            return Some(ParseError {
+                token: peek,
+                message: message.to_string(),
+            });
         }
         self.had_error = true;
         Some(ParseError {
-            token: self.peek().unwrap(),
-            message: message.to_string(),
+            token: Token {
+                token_type: TokenType::EOF,
+                lexeme: String::from(""),
+                line: 0,
+                literal: Literal::None,
+            },
+            message: format!("{} (unexpected end of input)", message),
         })
     }
 
@@ -224,8 +314,14 @@ impl Parser {
         None
     }
 
-    fn advance(&mut self) {
-        self.current += 1;
+    fn advance(&mut self) -> Option<Token> {
+        if !self.is_at_end() {
+            self.current += 1;
+            if self.current > 0 {
+                return Some(self.tokens[self.current - 1].clone());
+            }
+        }
+        None
     }
 
     fn equality(&mut self) -> Result<Expr, ParseError> {
@@ -342,12 +438,19 @@ impl Parser {
                     })
                 }
                 TokenType::IDENTIFIER => {
-                    return Ok(Expr::Variable { name: self.tokens[self.current - 1].clone() })
+                    self.advance();
+                    return Ok(Expr::Variable {
+                        name: self.tokens[self.current - 1].clone(),
+                    });
                 }
-                _ => Err(ParseError {
-                    token: token.clone(),
-                    message: String::from("Expected expression."),
-                }),
+                _ => {
+                    // println!("{:?}", token.token_type);
+                    self.had_error = true;
+                    Err(ParseError {
+                        token: token.clone(),
+                        message: String::from("Expected expression."),
+                    })
+                }
             }
         } else {
             Err(ParseError {
@@ -401,7 +504,7 @@ pub fn run_parser(filename: &str) {
         return;
     }
 
-    let mut parser = Parser::new(return_tokens(&file_contents));
+    let mut parser = Parser::new(return_tokens(&file_contents), false);
     let statements = parser.parse();
     for stmt in statements {
         match stmt {
@@ -413,5 +516,9 @@ pub fn run_parser(filename: &str) {
             }
             _ => (),
         }
+    }
+
+    if parser.had_error {
+        std::process::exit(65);
     }
 }

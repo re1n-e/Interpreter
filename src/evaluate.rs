@@ -1,6 +1,6 @@
+use crate::environment::Environment;
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use crate::parse::{Expr, Parser, Stmt};
-use crate::environment::Environment;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
@@ -34,7 +34,7 @@ pub struct RuntimeError {
 type Result<T> = std::result::Result<T, RuntimeError>;
 
 pub struct Evaluate {
-    environment: crate::environment::Environment,
+    environment: Environment,
 }
 
 impl Evaluate {
@@ -44,12 +44,51 @@ impl Evaluate {
         }
     }
 
+    fn visit_block_stmt(&mut self, statements: Vec<Stmt>) {
+        self.execute_block(statements);
+    }
+
+    fn execute_block(&mut self, statements: Vec<Stmt>) {
+        let previous = self.environment.clone();
+        self.environment.enclosing();
+
+        for statement in statements {
+            match statement {
+                Stmt::Expression(expr) => {
+                    if let Err(error) = self.visit_expression_stmt(&expr) {
+                        writeln!(
+                            io::stderr(),
+                            "[line {}] Runtime Error: {}",
+                            error.line,
+                            error.message
+                        )
+                        .unwrap();
+                        std::process::exit(70);
+                    }
+                }
+                Stmt::Print(expr) => self.visit_print_stmt(&expr),
+                Stmt::Var(name, expr) => self.visit_var_stmt(&expr, &name),
+                Stmt::Block(statements) => self.visit_block_stmt(statements),
+            }
+        }
+        self.environment = previous;
+    }
+
     fn visit_var_stmt(&mut self, expr: &Expr, name: &Token) {
         let mut value = Value::Nil;
         if !matches!(expr, Expr::Null) {
             match self.evaluate(expr) {
                 Ok(val) => value = val,
-                Err(_) => (),
+                Err(error) => {
+                    writeln!(
+                        io::stderr(),
+                        "[line {}] Runtime Error: {}",
+                        error.line,
+                        error.message
+                    )
+                    .unwrap();
+                    std::process::exit(70);
+                }
             }
         }
         self.environment.define(name.lexeme.clone(), value);
@@ -59,13 +98,24 @@ impl Evaluate {
         self.environment.get(name)
     }
 
-    
+    fn visit_assign_expr(&mut self, expr: &Expr, name: Token) -> Result<Value> {
+        let value = self.evaluate(expr);
+        match value {
+            Ok(value) => {
+                match self.environment.assign(name, value.clone()) {
+                    Ok(_) => return Ok(value),
+                    Err(err) => return Err(err),
+                };
+            }
+            Err(err) => return Err(err),
+        }
+    }
 
-    fn visit_expression_stmt(&self, expr: &Expr) -> Result<Value> {
+    fn visit_expression_stmt(&mut self, expr: &Expr) -> Result<Value> {
         self.evaluate(expr)
     }
 
-    fn visit_print_stmt(&self, expr: &Expr) {
+    fn visit_print_stmt(&mut self, expr: &Expr) {
         let value = self.evaluate(expr);
         match value {
             Ok(v) => println!("{}", v),
@@ -82,7 +132,7 @@ impl Evaluate {
         }
     }
 
-    fn evaluate(&self, expr: &Expr) -> Result<Value> {
+    fn evaluate(&mut self, expr: &Expr) -> Result<Value> {
         match expr {
             Expr::Literal { value } => match value {
                 Literal::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -115,6 +165,8 @@ impl Evaluate {
                     }),
                 }
             }
+            Expr::Variable { name } => self.visit_variable_expr(name.clone()),
+            Expr::Assign { name, value } => self.visit_assign_expr(value, name.clone()),
             Expr::Binary {
                 left,
                 operator,
@@ -240,12 +292,12 @@ pub fn evaluate(filename: &str, flag: bool) {
         return;
     }
 
-    let mut parser = Parser::new(return_tokens(&file_contents));
-    let Evaluate = Evaluate::new();
+    let mut parser = Parser::new(return_tokens(&file_contents), true);
+    let mut evaluate = Evaluate::new();
     let statement = parser.parse();
     for stmt in statement {
         match stmt {
-            Stmt::Expression(expr) => match Evaluate.visit_expression_stmt(&expr) {
+            Stmt::Expression(expr) => match evaluate.visit_expression_stmt(&expr) {
                 Ok(value) => {
                     if flag {
                         println!("{}", value);
@@ -262,8 +314,12 @@ pub fn evaluate(filename: &str, flag: bool) {
                     std::process::exit(70)
                 }
             },
-            Stmt::Print(expr) => Evaluate.visit_print_stmt(&expr),
-            _ => (),
+            Stmt::Print(expr) => evaluate.visit_print_stmt(&expr),
+            Stmt::Block(statements) => evaluate.visit_block_stmt(statements),
+            Stmt::Var(name, expr) => evaluate.visit_var_stmt(&expr, &name),
         }
+    }
+    if parser.had_error && !flag {
+        std::process::exit(65);
     }
 }
