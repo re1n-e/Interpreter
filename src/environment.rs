@@ -1,32 +1,42 @@
 use crate::evaluate::{RuntimeError, Value};
 use crate::lexer::Token;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct Environment {
-    enclosing: Option<Box<Environment>>,
+    pub enclosing: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Value>,
 }
 
 impl Environment {
-    pub fn new() -> Environment {
+    pub fn new() -> Self {
         Environment {
             enclosing: None,
             values: HashMap::new(),
         }
     }
 
-    pub fn enclosing(&mut self) {
-        self.enclosing = Some(Box::new(Environment::new()));
+    pub fn from_enclosing(enclosing: Rc<RefCell<Environment>>) -> Self {
+        Environment {
+            enclosing: Some(enclosing),
+            values: HashMap::new(),
+        }
+    }
+
+    pub fn define(&mut self, name: String, value: Value) {
+        self.values.insert(name, value);
     }
 
     pub fn assign(&mut self, name: Token, value: Value) -> Result<(), RuntimeError> {
-        if let Some(_) = self.values.get(&name.lexeme) {
+        if self.values.contains_key(&name.lexeme) {
             self.values.insert(name.lexeme, value);
             return Ok(());
         }
-        match &mut self.enclosing {
-            Some(enclose) => enclose.assign(name, value),
+
+        match &self.enclosing {
+            Some(enclose) => enclose.borrow_mut().assign(name, value),
             None => Err(RuntimeError {
                 message: format!("Undefined variable '{}'.", name.lexeme),
                 line: name.line,
@@ -35,15 +45,11 @@ impl Environment {
         }
     }
 
-    pub fn define(&mut self, name: String, value: Value) {
-        self.values.insert(name, value);
-    }
-
     pub fn get(&self, name: Token) -> Result<Value, RuntimeError> {
         match self.values.get(&name.lexeme) {
             Some(val) => Ok(val.clone()),
             None => match &self.enclosing {
-                Some(enclose) => enclose.get(name),
+                Some(enclose) => enclose.borrow().get(name),
                 None => Err(RuntimeError {
                     message: format!("Undefined variable '{}'.", name.lexeme),
                     line: name.line,

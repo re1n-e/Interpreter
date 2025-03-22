@@ -1,9 +1,11 @@
 use crate::environment::Environment;
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use crate::parse::{Expr, Parser, Stmt};
+use std::cell::RefCell;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -44,34 +46,127 @@ impl Evaluate {
         }
     }
 
+    fn execute(&mut self, stmt: Stmt, flag: bool) {
+        match stmt {
+            Stmt::Expression(expr) => match self.visit_expression_stmt(&expr) {
+                Ok(value) => {
+                    if flag {
+                        println!("{}", value);
+                    }
+                }
+                Err(error) => {
+                    writeln!(
+                        io::stderr(),
+                        "[line {}] Runtime Error: {}",
+                        error.line,
+                        error.message
+                    )
+                    .unwrap();
+                    std::process::exit(70)
+                }
+            },
+            Stmt::Print(expr) => self.visit_print_stmt(&expr),
+            Stmt::Block(statements) => self.visit_block_stmt(statements),
+            Stmt::Var(name, expr) => self.visit_var_stmt(&expr, &name),
+            Stmt::If(condition, then_branch, else_branch) => {
+                self.visit_if_statement(condition, *then_branch, *else_branch)
+            }
+            Stmt::While(condition, body) => self.visit_while_stmt(&condition, &body),
+        }
+    }
+
     fn visit_block_stmt(&mut self, statements: Vec<Stmt>) {
         self.execute_block(statements);
     }
 
     fn execute_block(&mut self, statements: Vec<Stmt>) {
-        let previous = self.environment.clone();
-        self.environment.enclosing();
+        let previous = Rc::new(RefCell::new(self.environment.clone()));
+        self.environment = Environment::from_enclosing(previous);
 
-        for statement in statements {
-            match statement {
-                Stmt::Expression(expr) => {
-                    if let Err(error) = self.visit_expression_stmt(&expr) {
-                        writeln!(
-                            io::stderr(),
-                            "[line {}] Runtime Error: {}",
-                            error.line,
-                            error.message
-                        )
-                        .unwrap();
-                        std::process::exit(70);
+        for stmt in statements {
+            self.execute(stmt, false);
+        }
+        self.environment = match &self.environment.enclosing {
+            Some(enclosing) => enclosing.borrow().clone(),
+            None => Environment::new(),
+        };
+    }
+
+    fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) {
+        while {
+            let cond_val = self.evaluate(condition);
+            match cond_val {
+                Ok(val) => self.is_truthy(&val),
+                Err(error) => {
+                    writeln!(
+                        io::stderr(),
+                        "[line {}] Runtime Error: {}",
+                        error.line,
+                        error.message
+                    )
+                    .unwrap();
+                    std::process::exit(70);
+                }
+            }
+        } {
+            self.execute(body.clone(), true);
+        }
+    }
+
+    fn visit_logical_expr(&mut self, left: &Expr, operator: &Token, right: &Expr) -> Result<Value> {
+        let left = self.evaluate(left)?;
+
+        match operator.token_type {
+            TokenType::OR => {
+                if self.is_truthy(&left) {
+                    Ok(left)
+                } else {
+                    self.evaluate(right)
+                }
+            }
+            TokenType::AND => {
+                if !self.is_truthy(&left) {
+                    Ok(left)
+                } else {
+                    self.evaluate(right)
+                }
+            }
+            _ => Err(RuntimeError {
+                message: "Unknown logical operator".to_string(),
+                token: operator.clone(),
+                line: operator.line,
+            }),
+        }
+    }
+
+    fn visit_if_statement(
+        &mut self,
+        condition: Expr,
+        then_brnach: Stmt,
+        else_branch: Option<Stmt>,
+    ) {
+        match self.evaluate(&condition) {
+            Ok(condition) => {
+                if self.is_truthy(&condition) {
+                    self.execute(then_brnach, false);
+                } else {
+                    match else_branch {
+                        Some(stmt) => self.execute(stmt, false),
+                        None => (),
                     }
                 }
-                Stmt::Print(expr) => self.visit_print_stmt(&expr),
-                Stmt::Var(name, expr) => self.visit_var_stmt(&expr, &name),
-                Stmt::Block(statements) => self.visit_block_stmt(statements),
+            }
+            Err(error) => {
+                writeln!(
+                    io::stderr(),
+                    "[line {}] Runtime Error: {}",
+                    error.line,
+                    error.message
+                )
+                .unwrap();
+                std::process::exit(70);
             }
         }
-        self.environment = previous;
     }
 
     fn visit_var_stmt(&mut self, expr: &Expr, name: &Token) {
@@ -167,6 +262,11 @@ impl Evaluate {
             }
             Expr::Variable { name } => self.visit_variable_expr(name.clone()),
             Expr::Assign { name, value } => self.visit_assign_expr(value, name.clone()),
+            Expr::Logical {
+                left,
+                operator,
+                right,
+            } => self.visit_logical_expr(left, operator, right),
             Expr::Binary {
                 left,
                 operator,
@@ -247,7 +347,7 @@ impl Evaluate {
         }
     }
 
-    fn is_truthy(&self, value: &Value) -> bool {
+    fn is_truthy(&mut self, value: &Value) -> bool {
         match value {
             Value::Nil => false,
             Value::Boolean(b) => *b,
@@ -292,32 +392,11 @@ pub fn evaluate(filename: &str, flag: bool) {
         return;
     }
 
-    let mut parser = Parser::new(return_tokens(&file_contents), true);
+    let mut parser = Parser::new(return_tokens(&file_contents), !flag);
     let mut evaluate = Evaluate::new();
     let statement = parser.parse();
     for stmt in statement {
-        match stmt {
-            Stmt::Expression(expr) => match evaluate.visit_expression_stmt(&expr) {
-                Ok(value) => {
-                    if flag {
-                        println!("{}", value);
-                    }
-                }
-                Err(error) => {
-                    writeln!(
-                        io::stderr(),
-                        "[line {}] Runtime Error: {}",
-                        error.line,
-                        error.message
-                    )
-                    .unwrap();
-                    std::process::exit(70)
-                }
-            },
-            Stmt::Print(expr) => evaluate.visit_print_stmt(&expr),
-            Stmt::Block(statements) => evaluate.visit_block_stmt(statements),
-            Stmt::Var(name, expr) => evaluate.visit_var_stmt(&expr, &name),
-        }
+        evaluate.execute(stmt, flag);
     }
     if parser.had_error && !flag {
         std::process::exit(65);

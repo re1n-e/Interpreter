@@ -10,7 +10,7 @@ pub mod environment;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        writeln!(io::stderr(), "Usage: {} tokenize <filename>", args[0]).unwrap();
+        writeln!(io::stderr(), "Usage: {} command <filename>", args[0]).unwrap();
         exit(1);
     }
 
