@@ -13,6 +13,11 @@ pub enum Expr {
         operator: Token,
         right: Box<Expr>,
     },
+    Call {
+        callee: Box<Expr>,
+        paren: Token,
+        arguments: Vec<Expr>,
+    },
     Grouping {
         expression: Box<Expr>,
     },
@@ -77,6 +82,7 @@ impl Expr {
                 )
             }
             Expr::Null => "null".to_string(),
+            _ => String::new(),
         }
     }
 }
@@ -217,7 +223,8 @@ impl Parser {
             }
             TokenType::VAR => {
                 self.advance();
-                self.var_declaration()},
+                self.var_declaration()
+            }
             _ => self.expression_statement(),
         };
 
@@ -644,7 +651,57 @@ impl Parser {
                 right: Box::new(right),
             });
         }
-        self.primary()
+        self.call()
+    }
+
+    fn call(&mut self) -> Result<Expr, ParseError> {
+        let mut expr = self.primary();
+        while true {
+            match self.match_token(vec![TokenType::LEFT_PAREN]) {
+                Some(_) => match expr {
+                    Ok(val) => expr = self.finish_call(val),
+                    Err(error) => return Err(error),
+                },
+                None => break,
+            }
+        }
+        expr
+    }
+
+    fn finish_call(&mut self, expr: Expr) -> Result<Expr, ParseError> {
+        let mut arguments: Vec<Expr> = Vec::new();
+        if !matches!(self.peek().unwrap().token_type, TokenType::RIGHT_PAREN) {
+            match self.expression() {
+                Ok(value) => arguments.push(value),
+                Err(error) => return Err(error),
+            }
+            while let Some(_) = self.match_token(vec![TokenType::COMMA]) {
+                match self.expression() {
+                    Ok(value) => {
+                        if arguments.len() >= 255 {
+                            return Err(ParseError {
+                                token: self.peek().unwrap(),
+                                message: "Can't have more than 255 arguments.".to_string(),
+                            })
+                        }
+                        arguments.push(value);
+                    },
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        if let Some(error) = self.consume(TokenType::RIGHT_PAREN, "Expect ')' after arguments.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            self.had_error = true;
+        }
+        Ok(Expr::Call {
+            callee: Box::new(expr),
+            paren: self.tokens[self.current - 1].clone(),
+            arguments,
+        })
     }
 
     fn primary(&mut self) -> Result<Expr, ParseError> {

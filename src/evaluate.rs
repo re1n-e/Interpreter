@@ -7,12 +7,18 @@ use std::fs;
 use std::io::{self, Write};
 use std::rc::Rc;
 
-#[derive(Debug, Clone)]
+pub trait LoxCallable {
+    fn arity(&self) -> usize;
+    fn call(&self, interpreter: &mut Evaluate, arguments: Vec<Value>) -> Result<Value>;
+}
+
+#[derive(Clone)]
 pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
     Nil,
+    Function(Rc<dyn LoxCallable>),
 }
 
 impl fmt::Display for Value {
@@ -22,6 +28,7 @@ impl fmt::Display for Value {
             Value::String(value) => write!(f, "{}", value),
             Value::Boolean(value) => write!(f, "{:?}", value),
             Value::Nil => write!(f, "nil"),
+            Value::Function(_) => write!(f, "<native fn>"),
         }
     }
 }
@@ -36,13 +43,16 @@ pub struct RuntimeError {
 type Result<T> = std::result::Result<T, RuntimeError>;
 
 pub struct Evaluate {
-    environment: Environment,
+    globals: Environment,
+    environment: Rc<RefCell<Environment>>,
 }
 
 impl Evaluate {
     pub fn new() -> Self {
+        let globals = Environment::new();
         Evaluate {
-            environment: Environment::new(),
+            environment: Rc::new(RefCell::new(globals.clone())),
+            globals,
         }
     }
 
@@ -80,16 +90,64 @@ impl Evaluate {
     }
 
     fn execute_block(&mut self, statements: Vec<Stmt>) {
-        let previous = Rc::new(RefCell::new(self.environment.clone()));
-        self.environment = Environment::from_enclosing(previous);
+        let previous = Rc::clone(&self.environment);
+        self.environment = Rc::new(RefCell::new(Environment::from_enclosing(previous.clone())));
 
         for stmt in statements {
             self.execute(stmt, false);
         }
-        self.environment = match &self.environment.enclosing {
-            Some(enclosing) => enclosing.borrow().clone(),
-            None => Environment::new(),
-        };
+
+        self.environment = previous;
+    }
+
+    fn visit_call_expr(&mut self, expr: &Expr) -> Result<Value> {
+        match expr {
+            Expr::Call {
+                callee,
+                paren,
+                arguments,
+            } => {
+                let callee = self.evaluate(callee)?;
+
+                let mut evaluated_args = Vec::new();
+                for arg in arguments {
+                    let arg_value = self.evaluate(arg)?;
+                    evaluated_args.push(arg_value);
+                }
+
+                match callee {
+                    Value::Function(function) => {
+                        if arguments.len() != function.arity() {
+                            return Err(RuntimeError {
+                                message: format!(
+                                    "Expected {} arguments but got {}.",
+                                    function.arity(),
+                                    arguments.len()
+                                ),
+                                token: paren.clone(),
+                                line: paren.line,
+                            });
+                        }
+                        function.call(self, evaluated_args)
+                    }
+                    _ => Err(RuntimeError {
+                        message: "Can only call functions and classes.".to_string(),
+                        token: paren.clone(),
+                        line: paren.line,
+                    }),
+                }
+            }
+            _ => Err(RuntimeError {
+                message: "Expected call expression.".to_string(),
+                token: Token {
+                    token_type: TokenType::NIL,
+                    lexeme: String::new(),
+                    line: 0,
+                    literal: Literal::None,
+                },
+                line: 0,
+            }),
+        }
     }
 
     fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) {
@@ -186,18 +244,20 @@ impl Evaluate {
                 }
             }
         }
-        self.environment.define(name.lexeme.clone(), value);
+        self.environment
+            .borrow_mut()
+            .define(name.lexeme.clone(), value);
     }
 
     fn visit_variable_expr(&self, name: Token) -> Result<Value> {
-        self.environment.get(name)
+        self.environment.borrow_mut().get(name)
     }
 
     fn visit_assign_expr(&mut self, expr: &Expr, name: Token) -> Result<Value> {
         let value = self.evaluate(expr);
         match value {
             Ok(value) => {
-                match self.environment.assign(name, value.clone()) {
+                match self.environment.borrow_mut().assign(name, value.clone()) {
                     Ok(_) => return Ok(value),
                     Err(err) => return Err(err),
                 };
