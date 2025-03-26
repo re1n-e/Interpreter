@@ -1,4 +1,5 @@
 use crate::environment::Environment;
+use crate::function::{Clock, LoxCallable};
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use crate::parse::{Expr, Parser, Stmt};
 use std::cell::RefCell;
@@ -6,11 +7,6 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::rc::Rc;
-
-pub trait LoxCallable {
-    fn arity(&self) -> usize;
-    fn call(&self, interpreter: &mut Evaluate, arguments: Vec<Value>) -> Result<Value>;
-}
 
 #[derive(Clone)]
 pub enum Value {
@@ -54,6 +50,11 @@ impl Evaluate {
             environment: Rc::new(RefCell::new(globals.clone())),
             globals,
         }
+    }
+
+    fn define_globals(&mut self) {
+        self.globals
+            .define(String::from("clock"), Value::Function(Rc::new(Clock)));
     }
 
     fn execute(&mut self, stmt: Stmt, flag: bool) {

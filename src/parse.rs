@@ -105,6 +105,7 @@ pub struct Parser {
 pub enum Stmt {
     Block(Vec<Stmt>),
     Expression(Expr),
+    Function(Token, Vec<Token>, Vec<Stmt>),
     If(Expr, Box<Stmt>, Box<Option<Stmt>>),
     Print(Expr),
     Var(Token, Expr),
@@ -148,10 +149,36 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Option<Stmt> {
+        if let Some(_) = self.match_token(vec![TokenType::FUN]) {
+            return self.function("function");
+        }
         if let Some(_) = self.match_token(vec![TokenType::VAR]) {
             return self.var_declaration();
         }
         self.statement()
+    }
+
+    fn function(&mut self, kind: &str) -> Option<Stmt> {
+        if let Some(error) = self.consume(TokenType::IDENTIFIER, "Expect '(' after 'for'.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            return None;
+        }
+        let name = self.tokens[self.current - 1].clone();
+        if let Some(error) = self.consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            return None;
+        }
+        let mut parameters: Vec<Token> = Vec::new();
+        if !matches!(self.peek().unwrap().token_type, TokenType::RIGHT_PAREN) {
+            
+        }
+        None
     }
 
     fn var_declaration(&mut self) -> Option<Stmt> {
@@ -682,10 +709,10 @@ impl Parser {
                             return Err(ParseError {
                                 token: self.peek().unwrap(),
                                 message: "Can't have more than 255 arguments.".to_string(),
-                            })
+                            });
                         }
                         arguments.push(value);
-                    },
+                    }
                     Err(error) => return Err(error),
                 }
             }

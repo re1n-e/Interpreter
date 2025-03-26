@@ -4,7 +4,7 @@ use std::process::exit;
 pub mod evaluate;
 pub mod lexer;
 pub mod parse;
-pub mod interpreter;
+pub mod function;
 pub mod environment;
 
 fn main() {
