@@ -108,6 +108,7 @@ pub enum Stmt {
     Function(Token, Vec<Token>, Vec<Stmt>),
     If(Expr, Box<Stmt>, Box<Option<Stmt>>),
     Print(Expr),
+    Return(Token, Expr),
     Var(Token, Expr),
     While(Expr, Box<Stmt>),
 }
@@ -159,7 +160,7 @@ impl Parser {
     }
 
     fn function(&mut self, kind: &str) -> Option<Stmt> {
-        if let Some(error) = self.consume(TokenType::IDENTIFIER, "Expect '(' after 'for'.") {
+        if let Some(error) = self.consume(TokenType::IDENTIFIER, &format!("Expect {kind} name.")) {
             eprintln!(
                 "Parse error at line {}: {}",
                 error.token.line, error.message
@@ -167,7 +168,10 @@ impl Parser {
             return None;
         }
         let name = self.tokens[self.current - 1].clone();
-        if let Some(error) = self.consume(TokenType::LEFT_PAREN, "Expect '(' after 'for'.") {
+        if let Some(error) = self.consume(
+            TokenType::LEFT_PAREN,
+            &format!("Expect '(' after {kind} name."),
+        ) {
             eprintln!(
                 "Parse error at line {}: {}",
                 error.token.line, error.message
@@ -176,9 +180,50 @@ impl Parser {
         }
         let mut parameters: Vec<Token> = Vec::new();
         if !matches!(self.peek().unwrap().token_type, TokenType::RIGHT_PAREN) {
-            
+            loop {
+                if parameters.len() >= 255 {
+                    eprintln!(
+                        "Parse error at line {}: {}",
+                        self.peek().unwrap().line,
+                        "Can't have more than 255 parameters."
+                    );
+                    return None;
+                }
+                let param = self.peek().unwrap();
+                if let Some(error) = self.consume(TokenType::IDENTIFIER, "Expect parameter name.") {
+                    eprintln!(
+                        "Parse error at line {}: {}",
+                        error.token.line, error.message
+                    );
+                    return None;
+                }
+                parameters.push(param);
+                if !matches!(self.peek().unwrap().token_type, TokenType::COMMA) {
+                    break;
+                }
+                self.advance();
+            }
         }
-        None
+
+        if let Some(error) = self.consume(TokenType::RIGHT_PAREN, "Expect ')' after parameters.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            return None;
+        }
+        if let Some(error) = self.consume(
+            TokenType::LEFT_BRACE,
+            &format!("Expect '{{' before {kind} body."),
+        ) {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            return None;
+        }
+        let body = self.block();
+        Some(Stmt::Function(name, parameters, body))
     }
 
     fn var_declaration(&mut self) -> Option<Stmt> {
@@ -226,6 +271,9 @@ impl Parser {
         if let Some(_) = self.match_token(vec![TokenType::WHILE]) {
             return self.while_statement();
         }
+        if let Some(_) = self.match_token(vec![TokenType::RETURN]) {
+            return self.return_stmt();
+        }
         if let Some(_) = self.match_token(vec![TokenType::FOR]) {
             return self.for_statement();
         }
@@ -233,6 +281,31 @@ impl Parser {
             return Some(Stmt::Block(self.block()));
         }
         self.expression_statement()
+    }
+
+    fn return_stmt(&mut self) -> Option<Stmt> {
+        let keyword = self.tokens[self.current - 1].clone();
+        let mut value: Option<Expr> = None;
+        if !matches!(self.peek().unwrap().token_type, TokenType::SEMICOLON) {
+            match self.expression() {
+                Ok(expr) => value = Some(expr),
+                Err(error) => {
+                    eprintln!(
+                        "Parse error at line {}: {}",
+                        error.token.line, error.message
+                    );
+                    return None;
+                }
+            }
+        }
+        if let Some(error) = self.consume(TokenType::SEMICOLON, "Expect ';' after return value.") {
+            eprintln!(
+                "Parse error at line {}: {}",
+                error.token.line, error.message
+            );
+            return None;
+        }
+        Some(Stmt::Return(keyword, value.unwrap()))
     }
 
     fn for_statement(&mut self) -> Option<Stmt> {
@@ -683,7 +756,7 @@ impl Parser {
 
     fn call(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.primary();
-        while true {
+        loop {
             match self.match_token(vec![TokenType::LEFT_PAREN]) {
                 Some(_) => match expr {
                     Ok(val) => expr = self.finish_call(val),

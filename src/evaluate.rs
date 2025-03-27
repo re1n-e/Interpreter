@@ -1,7 +1,8 @@
 use crate::environment::Environment;
-use crate::function::{Clock, LoxCallable};
+use crate::function::{Clock, LoxCallable, LoxFunction};
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use crate::parse::{Expr, Parser, Stmt};
+use core::error;
 use std::cell::RefCell;
 use std::fmt;
 use std::fs;
@@ -24,7 +25,7 @@ impl fmt::Display for Value {
             Value::String(value) => write!(f, "{}", value),
             Value::Boolean(value) => write!(f, "{:?}", value),
             Value::Nil => write!(f, "nil"),
-            Value::Function(_) => write!(f, "<native fn>"),
+            Value::Function(value) => write!(f, "{}", value.to_string()),
         }
     }
 }
@@ -39,21 +40,22 @@ pub struct RuntimeError {
 type Result<T> = std::result::Result<T, RuntimeError>;
 
 pub struct Evaluate {
-    globals: Environment,
+    pub globals: Rc<RefCell<Environment>>,
     environment: Rc<RefCell<Environment>>,
 }
 
 impl Evaluate {
     pub fn new() -> Self {
-        let globals = Environment::new();
+        let globals = Rc::new(RefCell::new(Environment::new()));
         Evaluate {
-            environment: Rc::new(RefCell::new(globals.clone())),
+            environment: Rc::clone(&globals),
             globals,
         }
     }
 
     fn define_globals(&mut self) {
         self.globals
+            .borrow_mut()
             .define(String::from("clock"), Value::Function(Rc::new(Clock)));
     }
 
@@ -83,15 +85,37 @@ impl Evaluate {
                 self.visit_if_statement(condition, *then_branch, *else_branch)
             }
             Stmt::While(condition, body) => self.visit_while_stmt(&condition, &body),
+            Stmt::Function(name, parameter, body) => {
+                self.visit_function_stmt(&name, parameter, body)
+            }
+            Stmt::Return(_keyword, _value) => (),
         }
     }
 
-    fn visit_block_stmt(&mut self, statements: Vec<Stmt>) {
-        self.execute_block(statements);
+    fn visit_return_stmt(&mut self, stmt_value: Expr) {
+        let value: Option<Value> = match stmt_value {
+            Expr::Null => None,
+            _ => match self.evaluate(&stmt_value) {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    writeln!(
+                        io::stderr(),
+                        "[line {}] Runtime Error: {}",
+                        error.line,
+                        error.message
+                    )
+                    .unwrap();
+                    std::process::exit(70)
+                },
+            },
+        };
     }
 
-    fn execute_block(&mut self, statements: Vec<Stmt>) {
-        let previous = Rc::clone(&self.environment);
+    fn visit_block_stmt(&mut self, statements: Vec<Stmt>) {
+        self.execute_block(statements, Rc::clone(&self.environment));
+    }
+
+    pub fn execute_block(&mut self, statements: Vec<Stmt>, previous: Rc<RefCell<Environment>>) {
         self.environment = Rc::new(RefCell::new(Environment::from_enclosing(previous.clone())));
 
         for stmt in statements {
@@ -101,52 +125,46 @@ impl Evaluate {
         self.environment = previous;
     }
 
-    fn visit_call_expr(&mut self, expr: &Expr) -> Result<Value> {
-        match expr {
-            Expr::Call {
-                callee,
-                paren,
-                arguments,
-            } => {
-                let callee = self.evaluate(callee)?;
+    fn visit_function_stmt(&mut self, name: &Token, parameter: Vec<Token>, body: Vec<Stmt>) {
+        let function = LoxFunction::new(name.clone(), parameter, body);
+        self.environment
+            .borrow_mut()
+            .define(name.lexeme.clone(), Value::Function(Rc::new(function)));
+    }
 
-                let mut evaluated_args = Vec::new();
-                for arg in arguments {
-                    let arg_value = self.evaluate(arg)?;
-                    evaluated_args.push(arg_value);
-                }
+    fn visit_call_expr(
+        &mut self,
+        callee: &Box<Expr>,
+        paren: &Token,
+        arguments: &Vec<Expr>,
+    ) -> Result<Value> {
+        let callee = self.evaluate(&callee)?;
 
-                match callee {
-                    Value::Function(function) => {
-                        if arguments.len() != function.arity() {
-                            return Err(RuntimeError {
-                                message: format!(
-                                    "Expected {} arguments but got {}.",
-                                    function.arity(),
-                                    arguments.len()
-                                ),
-                                token: paren.clone(),
-                                line: paren.line,
-                            });
-                        }
-                        function.call(self, evaluated_args)
-                    }
-                    _ => Err(RuntimeError {
-                        message: "Can only call functions and classes.".to_string(),
+        let mut evaluated_args = Vec::new();
+        for arg in arguments {
+            let arg_value = self.evaluate(&arg)?;
+            evaluated_args.push(arg_value);
+        }
+
+        match callee {
+            Value::Function(function) => {
+                if arguments.len() != function.arity() {
+                    return Err(RuntimeError {
+                        message: format!(
+                            "Expected {} arguments but got {}.",
+                            function.arity(),
+                            arguments.len()
+                        ),
                         token: paren.clone(),
                         line: paren.line,
-                    }),
+                    });
                 }
+                return function.call(self, evaluated_args);
             }
             _ => Err(RuntimeError {
-                message: "Expected call expression.".to_string(),
-                token: Token {
-                    token_type: TokenType::NIL,
-                    lexeme: String::new(),
-                    line: 0,
-                    literal: Literal::None,
-                },
-                line: 0,
+                message: "Can only call functions and classes.".to_string(),
+                token: paren.clone(),
+                line: paren.line,
             }),
         }
     }
@@ -328,6 +346,11 @@ impl Evaluate {
                 operator,
                 right,
             } => self.visit_logical_expr(left, operator, right),
+            Expr::Call {
+                callee,
+                paren,
+                arguments,
+            } => self.visit_call_expr(&callee, &paren, &arguments),
             Expr::Binary {
                 left,
                 operator,
@@ -455,6 +478,7 @@ pub fn evaluate(filename: &str, flag: bool) {
 
     let mut parser = Parser::new(return_tokens(&file_contents), !flag);
     let mut evaluate = Evaluate::new();
+    evaluate.define_globals();
     let statement = parser.parse();
     for stmt in statement {
         evaluate.execute(stmt, flag);
