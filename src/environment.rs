@@ -37,7 +37,7 @@ impl Environment {
 
         match &self.enclosing {
             Some(enclose) => enclose.borrow_mut().assign(name, value),
-            None => Err(RuntimeError {
+            None => Err(RuntimeError::Error {
                 message: format!("Undefined variable '{}'.", name.lexeme),
                 line: name.line,
                 token: name,
@@ -50,7 +50,7 @@ impl Environment {
             Some(val) => Ok(val.clone()),
             None => match &self.enclosing {
                 Some(enclose) => enclose.borrow().get(name),
-                None => Err(RuntimeError {
+                None => Err(RuntimeError::Error {
                     message: format!("Undefined variable '{}'.", name.lexeme),
                     line: name.line,
                     token: name,

@@ -2,7 +2,6 @@ use crate::environment::Environment;
 use crate::function::{Clock, LoxCallable, LoxFunction};
 use crate::lexer::{return_tokens, Literal, Token, TokenType};
 use crate::parse::{Expr, Parser, Stmt};
-use core::error;
 use std::cell::RefCell;
 use std::fmt;
 use std::fs;
@@ -30,14 +29,25 @@ impl fmt::Display for Value {
     }
 }
 
+pub struct Return {
+    pub value: Value,
+}
+
 #[derive(Debug)]
-pub struct RuntimeError {
+pub struct Error {
     pub message: String,
     pub token: Token,
     pub line: usize,
 }
 
-type Result<T> = std::result::Result<T, RuntimeError>;
+pub enum RuntimeError {
+    Error {
+        message: String,
+        line: usize,
+        token: Token,
+    },
+    Return(Return),
+}
 
 pub struct Evaluate {
     pub globals: Rc<RefCell<Environment>>,
@@ -59,7 +69,7 @@ impl Evaluate {
             .define(String::from("clock"), Value::Function(Rc::new(Clock)));
     }
 
-    fn execute(&mut self, stmt: Stmt, flag: bool) {
+    fn execute(&mut self, stmt: Stmt, flag: bool) -> Result<(), RuntimeError> {
         match stmt {
             Stmt::Expression(expr) => match self.visit_expression_stmt(&expr) {
                 Ok(value) => {
@@ -67,62 +77,95 @@ impl Evaluate {
                         println!("{}", value);
                     }
                 }
-                Err(error) => {
-                    writeln!(
-                        io::stderr(),
-                        "[line {}] Runtime Error: {}",
-                        error.line,
-                        error.message
-                    )
-                    .unwrap();
-                    std::process::exit(70)
-                }
+                Err(error) => match error {
+                    RuntimeError::Error {
+                        message,
+                        line,
+                        token,
+                    } => {
+                        writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
+                            .unwrap();
+                        std::process::exit(70)
+                    }
+                    _ => return Ok(()),
+                },
             },
-            Stmt::Print(expr) => self.visit_print_stmt(&expr),
-            Stmt::Block(statements) => self.visit_block_stmt(statements),
-            Stmt::Var(name, expr) => self.visit_var_stmt(&expr, &name),
+            Stmt::Print(expr) => {
+                self.visit_print_stmt(&expr);
+                return Ok(());
+            }
+            Stmt::Block(statements) => {
+                return self.visit_block_stmt(statements)
+            }
+            Stmt::Var(name, expr) => {
+                self.visit_var_stmt(&expr, &name);
+                return Ok(());
+            }
             Stmt::If(condition, then_branch, else_branch) => {
-                self.visit_if_statement(condition, *then_branch, *else_branch)
+                match self.visit_if_statement(condition, *then_branch, *else_branch) {
+                    Err(RuntimeError::Return(ret)) => return Err(RuntimeError::Return(ret)),
+                    _ => (),
+                }
             }
-            Stmt::While(condition, body) => self.visit_while_stmt(&condition, &body),
+            Stmt::While(condition, body) => {
+                self.visit_while_stmt(&condition, &body);
+                return Ok(());
+            }
             Stmt::Function(name, parameter, body) => {
-                self.visit_function_stmt(&name, parameter, body)
+                self.visit_function_stmt(&name, parameter, body);
+                return Ok(());
             }
-            Stmt::Return(_keyword, _value) => (),
+            Stmt::Return(_keyword, value) => match self.visit_return_stmt(value) {
+                Some(val) => return Err(RuntimeError::Return(val)),
+                None => return Ok(()),
+            },
         }
+        Ok(())
     }
 
-    fn visit_return_stmt(&mut self, stmt_value: Expr) {
+    fn visit_return_stmt(&mut self, stmt_value: Expr) -> Option<Return> {
         let value: Option<Value> = match stmt_value {
             Expr::Null => None,
             _ => match self.evaluate(&stmt_value) {
                 Ok(value) => Some(value),
-                Err(error) => {
-                    writeln!(
-                        io::stderr(),
-                        "[line {}] Runtime Error: {}",
-                        error.line,
-                        error.message
-                    )
-                    .unwrap();
-                    std::process::exit(70)
+                Err(error) => match error {
+                    RuntimeError::Error {
+                        message,
+                        line,
+                        token,
+                    } => {
+                        writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
+                            .unwrap();
+                        std::process::exit(70)
+                    }
+                    _ => return None,
                 },
             },
         };
+        Some(Return {
+            value: value.unwrap(),
+        })
     }
 
-    fn visit_block_stmt(&mut self, statements: Vec<Stmt>) {
-        self.execute_block(statements, Rc::clone(&self.environment));
+    fn visit_block_stmt(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
+        self.execute_block(statements, Rc::clone(&self.environment))
     }
 
-    pub fn execute_block(&mut self, statements: Vec<Stmt>, previous: Rc<RefCell<Environment>>) {
+    pub fn execute_block(
+        &mut self,
+        statements: Vec<Stmt>,
+        previous: Rc<RefCell<Environment>>,
+    ) -> Result<(), RuntimeError> {
         self.environment = Rc::new(RefCell::new(Environment::from_enclosing(previous.clone())));
-
         for stmt in statements {
-            self.execute(stmt, false);
+            match self.execute(stmt, false) {
+                Ok(()) => (),
+                Err(error) => {
+                    return Err(error);
+                }
+            }
         }
-
-        self.environment = previous;
+        Ok(())
     }
 
     fn visit_function_stmt(&mut self, name: &Token, parameter: Vec<Token>, body: Vec<Stmt>) {
@@ -137,7 +180,7 @@ impl Evaluate {
         callee: &Box<Expr>,
         paren: &Token,
         arguments: &Vec<Expr>,
-    ) -> Result<Value> {
+    ) -> Result<Value, RuntimeError> {
         let callee = self.evaluate(&callee)?;
 
         let mut evaluated_args = Vec::new();
@@ -149,22 +192,22 @@ impl Evaluate {
         match callee {
             Value::Function(function) => {
                 if arguments.len() != function.arity() {
-                    return Err(RuntimeError {
+                    return Err(RuntimeError::Error {
                         message: format!(
                             "Expected {} arguments but got {}.",
                             function.arity(),
                             arguments.len()
                         ),
-                        token: paren.clone(),
                         line: paren.line,
+                        token: paren.clone(),
                     });
                 }
                 return function.call(self, evaluated_args);
             }
-            _ => Err(RuntimeError {
+            _ => Err(RuntimeError::Error {
                 message: "Can only call functions and classes.".to_string(),
-                token: paren.clone(),
                 line: paren.line,
+                token: paren.clone(),
             }),
         }
     }
@@ -174,23 +217,30 @@ impl Evaluate {
             let cond_val = self.evaluate(condition);
             match cond_val {
                 Ok(val) => self.is_truthy(&val),
-                Err(error) => {
-                    writeln!(
-                        io::stderr(),
-                        "[line {}] Runtime Error: {}",
-                        error.line,
-                        error.message
-                    )
-                    .unwrap();
-                    std::process::exit(70);
-                }
+                Err(error) => match error {
+                    RuntimeError::Error {
+                        message,
+                        line,
+                        token,
+                    } => {
+                        writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
+                            .unwrap();
+                        std::process::exit(70)
+                    }
+                    _ => return,
+                },
             }
         } {
             self.execute(body.clone(), true);
         }
     }
 
-    fn visit_logical_expr(&mut self, left: &Expr, operator: &Token, right: &Expr) -> Result<Value> {
+    fn visit_logical_expr(
+        &mut self,
+        left: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Value, RuntimeError> {
         let left = self.evaluate(left)?;
 
         match operator.token_type {
@@ -208,10 +258,10 @@ impl Evaluate {
                     self.evaluate(right)
                 }
             }
-            _ => Err(RuntimeError {
+            _ => Err(RuntimeError::Error {
                 message: "Unknown logical operator".to_string(),
-                token: operator.clone(),
                 line: operator.line,
+                token: operator.clone(),
             }),
         }
     }
@@ -219,30 +269,30 @@ impl Evaluate {
     fn visit_if_statement(
         &mut self,
         condition: Expr,
-        then_brnach: Stmt,
+        then_branch: Stmt,
         else_branch: Option<Stmt>,
-    ) {
+    ) -> Result<(), RuntimeError> {
         match self.evaluate(&condition) {
-            Ok(condition) => {
-                if self.is_truthy(&condition) {
-                    self.execute(then_brnach, false);
+            Ok(condition_val) => {
+                if self.is_truthy(&condition_val) {
+                    self.execute(then_branch, false)
+                } else if let Some(stmt) = else_branch {
+                    self.execute(stmt, false)
                 } else {
-                    match else_branch {
-                        Some(stmt) => self.execute(stmt, false),
-                        None => (),
-                    }
+                    Ok(())
                 }
             }
-            Err(error) => {
-                writeln!(
-                    io::stderr(),
-                    "[line {}] Runtime Error: {}",
-                    error.line,
-                    error.message
-                )
-                .unwrap();
-                std::process::exit(70);
-            }
+            Err(error) => match error {
+                RuntimeError::Error {
+                    message,
+                    line,
+                    token,
+                } => {
+                    writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message).unwrap();
+                    std::process::exit(70)
+                }
+                RuntimeError::Return(ret) => Err(RuntimeError::Return(ret)),
+            },
         }
     }
 
@@ -251,16 +301,18 @@ impl Evaluate {
         if !matches!(expr, Expr::Null) {
             match self.evaluate(expr) {
                 Ok(val) => value = val,
-                Err(error) => {
-                    writeln!(
-                        io::stderr(),
-                        "[line {}] Runtime Error: {}",
-                        error.line,
-                        error.message
-                    )
-                    .unwrap();
-                    std::process::exit(70);
-                }
+                Err(error) => match error {
+                    RuntimeError::Error {
+                        message,
+                        line,
+                        token,
+                    } => {
+                        writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
+                            .unwrap();
+                        std::process::exit(70)
+                    }
+                    _ => return,
+                },
             }
         }
         self.environment
@@ -268,11 +320,11 @@ impl Evaluate {
             .define(name.lexeme.clone(), value);
     }
 
-    fn visit_variable_expr(&self, name: Token) -> Result<Value> {
+    fn visit_variable_expr(&self, name: Token) -> Result<Value, RuntimeError> {
         self.environment.borrow_mut().get(name)
     }
 
-    fn visit_assign_expr(&mut self, expr: &Expr, name: Token) -> Result<Value> {
+    fn visit_assign_expr(&mut self, expr: &Expr, name: Token) -> Result<Value, RuntimeError> {
         let value = self.evaluate(expr);
         match value {
             Ok(value) => {
@@ -285,7 +337,7 @@ impl Evaluate {
         }
     }
 
-    fn visit_expression_stmt(&mut self, expr: &Expr) -> Result<Value> {
+    fn visit_expression_stmt(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         self.evaluate(expr)
     }
 
@@ -293,20 +345,21 @@ impl Evaluate {
         let value = self.evaluate(expr);
         match value {
             Ok(v) => println!("{}", v),
-            Err(error) => {
-                writeln!(
-                    io::stderr(),
-                    "[line {}] Runtime Error: {}",
-                    error.line,
-                    error.message
-                )
-                .unwrap();
-                std::process::exit(70)
-            }
+            Err(error) => match error {
+                RuntimeError::Error {
+                    message,
+                    line,
+                    token,
+                } => {
+                    writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message).unwrap();
+                    std::process::exit(70)
+                }
+                _ => return,
+            },
         }
     }
 
-    fn evaluate(&mut self, expr: &Expr) -> Result<Value> {
+    fn evaluate(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
             Expr::Literal { value } => match value {
                 Literal::Boolean(b) => Ok(Value::Boolean(*b)),
@@ -324,7 +377,7 @@ impl Evaluate {
                         if let Value::Number(n) = right {
                             Ok(Value::Number(-n))
                         } else {
-                            Err(RuntimeError {
+                            Err(RuntimeError::Error {
                                 message: "Operand must be a number.".to_string(),
                                 token: operator.clone(),
                                 line: operator.line,
@@ -332,7 +385,7 @@ impl Evaluate {
                         }
                     }
                     TokenType::BANG => Ok(Value::Boolean(!self.is_truthy(&right))),
-                    _ => Err(RuntimeError {
+                    _ => Err(RuntimeError::Error {
                         message: "Invalid unary operator.".to_string(),
                         token: operator.clone(),
                         line: operator.line,
@@ -372,7 +425,7 @@ impl Evaluate {
                         (Value::String(a), Value::String(b)) => {
                             Ok(Value::String(format!("{}{}", a, b)))
                         }
-                        _ => Err(RuntimeError {
+                        _ => Err(RuntimeError::Error {
                             message: "Operands must be two numbers or two strings.".to_string(),
                             token: operator.clone(),
                             line: operator.line,
@@ -390,14 +443,14 @@ impl Evaluate {
                     }
                     TokenType::BANG_EQUAL => Ok(Value::Boolean(!self.is_equal(&left, &right))),
                     TokenType::EQUAL_EQUAL => Ok(Value::Boolean(self.is_equal(&left, &right))),
-                    _ => Err(RuntimeError {
+                    _ => Err(RuntimeError::Error {
                         message: "Invalid binary operator.".to_string(),
                         token: operator.clone(),
                         line: operator.line,
                     }),
                 }
             }
-            _ => Err(RuntimeError {
+            _ => Err(RuntimeError::Error {
                 message: "".to_string(),
                 token: Token {
                     token_type: TokenType::NIL,
@@ -416,14 +469,14 @@ impl Evaluate {
         right: &Value,
         op: F,
         operator: &Token,
-    ) -> Result<Value>
+    ) -> Result<Value, RuntimeError>
     where
         F: Fn(f64, f64) -> T,
         T: Into<Value>,
     {
         match (left, right) {
             (Value::Number(a), Value::Number(b)) => Ok(op(*a, *b).into()),
-            _ => Err(RuntimeError {
+            _ => Err(RuntimeError::Error {
                 message: "Operands must be numbers.".to_string(),
                 token: operator.clone(),
                 line: operator.line,

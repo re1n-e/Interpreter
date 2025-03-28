@@ -70,9 +70,13 @@ impl LoxCallable for LoxFunction {
         for i in 0..self.parameter.len() {
             environment.define(self.parameter[i].lexeme.clone(), arguments[i].clone());
         }
-        interpreter.execute_block(self.body.clone(), Rc::new(RefCell::new(environment)));
-
-        Ok(Value::Nil)
+        match interpreter.execute_block(self.body.clone(), Rc::new(RefCell::new(environment))) {
+            Ok(_) => return Ok(Value::Nil),
+            Err(err) => match err {
+                RuntimeError::Return(ret) => Ok(ret.value),
+                _ => Ok(Value::Nil),
+            },
+        }
     }
 
     fn to_string(&self) -> String {
