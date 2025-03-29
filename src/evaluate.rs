@@ -83,6 +83,7 @@ impl Evaluate {
                         line,
                         token,
                     } => {
+                        let _ = token;
                         writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
                             .unwrap();
                         std::process::exit(70)
@@ -94,9 +95,7 @@ impl Evaluate {
                 self.visit_print_stmt(&expr);
                 return Ok(());
             }
-            Stmt::Block(statements) => {
-                return self.visit_block_stmt(statements)
-            }
+            Stmt::Block(statements) => return self.visit_block_stmt(statements),
             Stmt::Var(name, expr) => {
                 self.visit_var_stmt(&expr, &name);
                 return Ok(());
@@ -107,44 +106,32 @@ impl Evaluate {
                     _ => (),
                 }
             }
-            Stmt::While(condition, body) => {
-                self.visit_while_stmt(&condition, &body);
-                return Ok(());
-            }
+            Stmt::While(condition, body) => return self.visit_while_stmt(&condition, &body),
             Stmt::Function(name, parameter, body) => {
                 self.visit_function_stmt(&name, parameter, body);
                 return Ok(());
             }
-            Stmt::Return(_keyword, value) => match self.visit_return_stmt(value) {
-                Some(val) => return Err(RuntimeError::Return(val)),
-                None => return Ok(()),
-            },
+            Stmt::Return(_keyword, value) => {
+                match self.visit_return_stmt(&_keyword, &Some(value)) {
+                    Ok(_) => return Ok(()),
+                    Err(error) => return Err(error),
+                }
+            }
         }
         Ok(())
     }
 
-    fn visit_return_stmt(&mut self, stmt_value: Expr) -> Option<Return> {
-        let value: Option<Value> = match stmt_value {
-            Expr::Null => None,
-            _ => match self.evaluate(&stmt_value) {
-                Ok(value) => Some(value),
-                Err(error) => match error {
-                    RuntimeError::Error {
-                        message,
-                        line,
-                        token,
-                    } => {
-                        writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
-                            .unwrap();
-                        std::process::exit(70)
-                    }
-                    _ => return None,
-                },
-            },
+    pub fn visit_return_stmt(
+        &mut self,
+        _keyword: &Token,
+        value: &Option<Expr>,
+    ) -> Result<(), RuntimeError> {
+        let val = if let Some(expr) = value {
+            self.evaluate(expr)?
+        } else {
+            return Ok(());
         };
-        Some(Return {
-            value: value.unwrap(),
-        })
+        Err(RuntimeError::Return(Return { value: val }))
     }
 
     fn visit_block_stmt(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
@@ -154,22 +141,41 @@ impl Evaluate {
     pub fn execute_block(
         &mut self,
         statements: Vec<Stmt>,
-        previous: Rc<RefCell<Environment>>,
+        env: Rc<RefCell<Environment>>,
     ) -> Result<(), RuntimeError> {
-        self.environment = Rc::new(RefCell::new(Environment::from_enclosing(previous.clone())));
-        for stmt in statements {
-            match self.execute(stmt, false) {
-                Ok(()) => (),
-                Err(error) => {
-                    return Err(error);
+        let previous = self.environment.clone();
+        self.environment = env;
+
+        let result = (|| {
+            for statement in statements {
+                match self.execute(statement, false) {
+                    Ok(_) => (),
+                    Err(error) => return Err(error),
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        })();
+
+        self.environment = previous;
+        result
     }
 
+    // let previous = self.environment.clone();
+    //     self.environment = Rc::new(RefCell::new(Environment::from_enclosing(env.clone())));
+    //     for stmt in statements {
+    //         match self.execute(stmt, false) {
+    //             Ok(()) => (),
+    //             Err(error) => {
+    //                 return Err(error);
+    //             }
+    //         }
+    //     }
+    //     self.environment = previous;
+    //     Ok(())
+
     fn visit_function_stmt(&mut self, name: &Token, parameter: Vec<Token>, body: Vec<Stmt>) {
-        let function = LoxFunction::new(name.clone(), parameter, body);
+        let function =
+            LoxFunction::new(name.clone(), parameter, body, Rc::clone(&self.environment));
         self.environment
             .borrow_mut()
             .define(name.lexeme.clone(), Value::Function(Rc::new(function)));
@@ -212,26 +218,19 @@ impl Evaluate {
         }
     }
 
-    fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) {
-        while {
+    fn visit_while_stmt(&mut self, condition: &Expr, body: &Stmt) -> Result<(), RuntimeError> {
+        loop {
             let cond_val = self.evaluate(condition);
             match cond_val {
-                Ok(val) => self.is_truthy(&val),
-                Err(error) => match error {
-                    RuntimeError::Error {
-                        message,
-                        line,
-                        token,
-                    } => {
-                        writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
-                            .unwrap();
-                        std::process::exit(70)
+                Ok(val) => {
+                    if self.is_truthy(&val) {
+                        let _ = self.execute(body.clone(), true);
+                    } else {
+                        return Ok(())
                     }
-                    _ => return,
-                },
+                }
+                Err(error) => return Err(error),
             }
-        } {
-            self.execute(body.clone(), true);
         }
     }
 
@@ -288,6 +287,7 @@ impl Evaluate {
                     line,
                     token,
                 } => {
+                    let _ = token;
                     writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message).unwrap();
                     std::process::exit(70)
                 }
@@ -307,6 +307,7 @@ impl Evaluate {
                         line,
                         token,
                     } => {
+                        let _ = token;
                         writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message)
                             .unwrap();
                         std::process::exit(70)
@@ -351,6 +352,7 @@ impl Evaluate {
                     line,
                     token,
                 } => {
+                    let _ = token;
                     writeln!(io::stderr(), "[line {}] Runtime Error: {}", line, message).unwrap();
                     std::process::exit(70)
                 }
@@ -534,7 +536,7 @@ pub fn evaluate(filename: &str, flag: bool) {
     evaluate.define_globals();
     let statement = parser.parse();
     for stmt in statement {
-        evaluate.execute(stmt, flag);
+        let _ = evaluate.execute(stmt, flag);
     }
     if parser.had_error && !flag {
         std::process::exit(65);

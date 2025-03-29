@@ -43,14 +43,21 @@ pub struct LoxFunction {
     name: Token,
     parameter: Vec<Token>,
     body: Vec<Stmt>,
+    closure: Rc<RefCell<Environment>>,
 }
 
 impl LoxFunction {
-    pub fn new(name: Token, parameter: Vec<Token>, body: Vec<Stmt>) -> Self {
+    pub fn new(
+        name: Token,
+        parameter: Vec<Token>,
+        body: Vec<Stmt>,
+        closure: Rc<RefCell<Environment>>,
+    ) -> Self {
         LoxFunction {
             name,
             parameter,
             body,
+            closure,
         }
     }
 }
@@ -65,17 +72,16 @@ impl LoxCallable for LoxFunction {
         interpreter: &mut Evaluate,
         arguments: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
-        let mut environment = Environment::from_enclosing(Rc::clone(&interpreter.globals));
+        let mut env = Environment::from_enclosing(Rc::clone(&self.closure));
 
-        for i in 0..self.parameter.len() {
-            environment.define(self.parameter[i].lexeme.clone(), arguments[i].clone());
+        for (param, arg) in self.parameter.iter().zip(arguments) {
+            env.define(param.lexeme.clone(), arg);
         }
-        match interpreter.execute_block(self.body.clone(), Rc::new(RefCell::new(environment))) {
-            Ok(_) => return Ok(Value::Nil),
-            Err(err) => match err {
-                RuntimeError::Return(ret) => Ok(ret.value),
-                _ => Ok(Value::Nil),
-            },
+
+        match interpreter.execute_block(self.body.clone(), Rc::clone(&Rc::new(RefCell::new(env)))) {
+            Ok(_) => Ok(Value::Nil),
+            Err(RuntimeError::Return(ret)) => Ok(ret.value),
+            Err(err) => Err(err),
         }
     }
 

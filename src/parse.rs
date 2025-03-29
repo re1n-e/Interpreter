@@ -305,7 +305,10 @@ impl Parser {
             );
             return None;
         }
-        Some(Stmt::Return(keyword, value.unwrap()))
+        match value {
+            Some(v) => return Some(Stmt::Return(keyword, v)),
+            None => return None,
+        }
     }
 
     fn for_statement(&mut self) -> Option<Stmt> {
