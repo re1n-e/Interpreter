@@ -135,7 +135,7 @@ impl Evaluate {
     }
 
     fn visit_block_stmt(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
-        self.execute_block(statements, Rc::clone(&self.environment))
+        self.execute_block(statements, Rc::new(RefCell::new(Environment::from_enclosing(self.environment.clone()))))
     }
 
     pub fn execute_block(
@@ -160,18 +160,19 @@ impl Evaluate {
         result
     }
 
-    // let previous = self.environment.clone();
+    // pub fn execute_block(
+   //     &mut self,
+    //     statements: Vec<Stmt>,
+    //     env: Rc<RefCell<Environment>>,
+    // ) -> Result<(), RuntimeError> {
+    //     let previous = self.environment.clone();
     //     self.environment = Rc::new(RefCell::new(Environment::from_enclosing(env.clone())));
     //     for stmt in statements {
-    //         match self.execute(stmt, false) {
-    //             Ok(()) => (),
-    //             Err(error) => {
-    //                 return Err(error);
-    //             }
-    //         }
+    //         return self.execute(stmt, false)
     //     }
     //     self.environment = previous;
     //     Ok(())
+    // } 
 
     fn visit_function_stmt(&mut self, name: &Token, parameter: Vec<Token>, body: Vec<Stmt>) {
         let function =
