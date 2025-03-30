@@ -6,6 +6,7 @@ pub mod lexer;
 pub mod parse;
 pub mod function;
 pub mod environment;
+pub mod resolver;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

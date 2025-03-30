@@ -63,13 +63,13 @@ impl Evaluate {
         }
     }
 
-    fn define_globals(&mut self) {
+    pub fn define_globals(&mut self) {
         self.globals
             .borrow_mut()
             .define(String::from("clock"), Value::Function(Rc::new(Clock)));
     }
 
-    fn execute(&mut self, stmt: Stmt, flag: bool) -> Result<(), RuntimeError> {
+    pub fn execute(&mut self, stmt: Stmt, flag: bool) -> Result<(), RuntimeError> {
         match stmt {
             Stmt::Expression(expr) => match self.visit_expression_stmt(&expr) {
                 Ok(value) => {
@@ -121,6 +121,8 @@ impl Evaluate {
         Ok(())
     }
 
+    pub fn resolve(&mut self, expr: &Expr, depth: usize) {}
+
     pub fn visit_return_stmt(
         &mut self,
         _keyword: &Token,
@@ -135,7 +137,12 @@ impl Evaluate {
     }
 
     fn visit_block_stmt(&mut self, statements: Vec<Stmt>) -> Result<(), RuntimeError> {
-        self.execute_block(statements, Rc::new(RefCell::new(Environment::from_enclosing(self.environment.clone()))))
+        self.execute_block(
+            statements,
+            Rc::new(RefCell::new(Environment::from_enclosing(
+                self.environment.clone(),
+            ))),
+        )
     }
 
     pub fn execute_block(
@@ -161,7 +168,7 @@ impl Evaluate {
     }
 
     // pub fn execute_block(
-   //     &mut self,
+    //     &mut self,
     //     statements: Vec<Stmt>,
     //     env: Rc<RefCell<Environment>>,
     // ) -> Result<(), RuntimeError> {
@@ -172,7 +179,7 @@ impl Evaluate {
     //     }
     //     self.environment = previous;
     //     Ok(())
-    // } 
+    // }
 
     fn visit_function_stmt(&mut self, name: &Token, parameter: Vec<Token>, body: Vec<Stmt>) {
         let function =
@@ -227,7 +234,7 @@ impl Evaluate {
                     if self.is_truthy(&val) {
                         let _ = self.execute(body.clone(), true);
                     } else {
-                        return Ok(())
+                        return Ok(());
                     }
                 }
                 Err(error) => return Err(error),
@@ -339,7 +346,7 @@ impl Evaluate {
         }
     }
 
-    fn visit_expression_stmt(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
+    pub fn visit_expression_stmt(&mut self, expr: &Expr) -> Result<Value, RuntimeError> {
         self.evaluate(expr)
     }
 
